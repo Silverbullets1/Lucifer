@@ -33,32 +33,27 @@ _URL_RE = re.compile(r"https?://\S+|https?:\S+|www\.\S+", re.IGNORECASE)
 
 
 def _strip_urls(text: str) -> str:
-    """Replace spoken URLs with the word 'लिंक' so TTS doesn't read letter soup."""
-    return _URL_RE.sub(" लिंक ", text)
+    """Replace spoken URLs with the word 'link' so TTS doesn't read letter soup.
+    Use English 'link' (not Hindi 'लिंक') so the Hinglish male voice reads it cleanly."""
+    return _URL_RE.sub(" link ", text)
 
 
 async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
     import edge_tts
 
-    # SSML energy boost: punchy Devil vibe (faster, louder, higher pitch).
-    # Escape XML special chars so replies with & or < don't break the SSML.
-    safe = (
-        text.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
-    ssml = (
-        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
-        'xml:lang="en-IN">'
-        '<prosody rate="fast" pitch="+3st" volume="loud">'
-        f"{safe}"
-        "</prosody></speak>"
-    )
-
+    # Native prosody params (edge_tts supports rate/volume/pitch directly —
+    # wrapping in SSML made Edge read the tags aloud as text, a bug).
+    # rate="fast" + louder + higher pitch = punchy Devil vibe.
     last_err = None
     for attempt in range(1, retries + 1):
         try:
-            communicate = edge_tts.Communicate(ssml, voice)
+            communicate = edge_tts.Communicate(
+                text,
+                voice,
+                rate="fast",
+                volume="+20%",
+                pitch="+3Hz",
+            )
             buf = io.BytesIO()
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
