@@ -27,6 +27,27 @@ from .tts import synthesize
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("lucifer")
 
+import re as _re
+
+# --- Reply sanitizer: strip emoji + any visual/physical descriptors the model
+# may hallucinate (Muskan's face, whisky glass, etc.) so TTS only speaks words. ---
+_EMOJI_RE = _re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
+    "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F"
+    "\U0000200D\U00002702-\U000027B0]+", flags=_re.UNICODE)
+_BANNED_VISUAL = _re.compile(
+    r"\b(muskan|whisky|whiskey|chehra|face|smirk|grin|wink|eyes?|smile|glass|"
+    r"scenery|avatar|screen|looklike|looks? like|expression)\b",
+    _re.IGNORECASE)
+
+def sanitize_reply(text: str) -> str:
+    if not text:
+        return text
+    text = _EMOJI_RE.sub("", text)              # remove all emoji
+    text = _BANNED_VISUAL.sub("", text)          # remove visual/physical words
+    text = _re.sub(r"\s{2,}", " ", text).strip()  # collapse extra spaces
+    return text
+
 app = FastAPI(title="Lucifer Voice Assistant", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
@@ -77,7 +98,7 @@ async def chat_stream(req: ChatReq):
     async def gen():
         try:
             async for tok in brain_stream(req.text, req.history or []):
-                yield tok
+                yield sanitize_reply(tok)
         except Exception as e:
             log.exception("stream failed")
             yield f"[error: {e}]"
@@ -102,6 +123,7 @@ async def voice(audio: UploadFile = File(...)):
     # 2) LLM
     try:
         reply = await brain_reply(text)
+        reply = sanitize_reply(reply)
     except Exception as e:
         log.exception("llm failed")
         raise HTTPException(500, f"llm: {e}")
@@ -145,8 +167,8 @@ async def ws(ws: WebSocket):
             if not text.strip():
                 continue
             reply = await brain_reply(text)
-            await ws.send_json({"type": "llm", "text": reply})
-            wav = await synthesize(reply, settings)
+            await ws.send_json({"type": "llm", "text": sanitize_reply(reply)})
+            wav = await synthesize(sanitize_reply(reply), settings)
             await ws.send_bytes(wav)
     except WebSocketDisconnect:
         pass
