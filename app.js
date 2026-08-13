@@ -99,35 +99,105 @@ async function speak(text) {
   }
 }
 
-// ---------- voice input (Web Speech API) ----------
+// ---------- voice input (Web Speech API + backend whisper fallback) ----------
+let mediaRecorder = null, micStream = null;
+
 function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return false;
   recog = new SR();
   recog.lang = "hi-IN"; // handles Hinglish; English words pass through
-  recog.interimResults = false;
+  recog.interimResults = true;
   recog.continuous = false;
   recog.onresult = (e) => {
-    const txt = e.results[0][0].transcript.trim();
-    if (txt) askLucifer(txt);
+    let txt = "";
+    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    txt = txt.trim();
+    if (txt) {
+      // show interim so user sees it's listening
+      let p = transcript.querySelector(".you.interim");
+      if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
+      p.textContent = "🧑 " + txt;
+      transcript.scrollTop = transcript.scrollHeight;
+      if (e.results[0].isFinal) {
+        p.remove();
+        askLucifer(txt);
+        stopListen();
+      }
+    }
   };
-  recog.onerror = () => stopListen();
+  recog.onerror = (ev) => {
+    const msg = ev && ev.error ? ev.error : "unknown";
+    console.warn("SpeechRecognition error:", msg);
+    // 'no-speech' / 'aborted' are benign; 'not-allowed' = mic denied
+    if (msg === "not-allowed" || msg === "service-not-allowed") {
+      hint.textContent = "❌ Mic permission blocked. Allow mic & retry, or use TYPE.";
+    } else if (msg !== "no-speech" && msg !== "aborted") {
+      // try backend whisper fallback
+      useBackendSTT();
+    }
+    stopListen();
+  };
   recog.onend = () => { if (listening) stopListen(); };
   return true;
 }
 
+// Fallback: record mic via MediaRecorder, send to backend /voice (whisper STT)
+async function useBackendSTT() {
+  if (busy) return;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(micStream);
+    const chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      const fd = new FormData();
+      fd.append("audio", blob, "speech.webm");
+      busy = true; setStatus("busy"); orb.classList.add("speaking");
+      try {
+        const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+        if (!r.ok) throw new Error("voice failed");
+        const d = await r.json();
+        if (d.text) {
+          addLine("you", d.text);
+          await speak(d.reply || "");
+        }
+      } catch (e) {
+        console.warn("backend STT failed", e);
+      } finally {
+        busy = false; setStatus("on"); orb.classList.remove("speaking");
+        if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+      }
+    };
+    mediaRecorder.start();
+    hint.textContent = "🎙️ Recording… tap TALK again to stop.";
+    // auto-stop after 8s
+    setTimeout(() => { if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop(); }, 8000);
+  } catch (e) {
+    hint.textContent = "❌ Mic access denied. Use TYPE to chat.";
+  }
+}
+
 function startListen() {
-  if (!recog || busy) return;
+  if (busy) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
-  try { recog.start(); } catch (_) {}
+  hint.textContent = "🎙️ Sun raha hoon… bol bc";
+  try {
+    recog.start();
+  } catch (_) {
+    // already started or unsupported -> try backend
+    useBackendSTT();
+  }
 }
 function stopListen() {
   listening = false;
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
   try { recog && recog.stop(); } catch (_) {}
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
 }
 
 // ---------- events ----------
