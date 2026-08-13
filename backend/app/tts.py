@@ -21,8 +21,9 @@ from .config import Settings
 
 log = logging.getLogger("lucifer.tts")
 
-# Microsoft Edge TTS voice for Hindi (free, no API key)
-EDGE_HI_VOICE = "hi-IN-SwaraNeural"  # Indian female (Devil's Queen), pure Hindi
+# Microsoft Edge TTS voice for Hinglish (free, no API key)
+# en-IN-NeerjaNeural = Indian female, natural Hinglish (Roman) accent — no USA accent
+EDGE_HI_VOICE = "en-IN-NeerjaNeural"
 
 # URLs / links — Edge reads these as awkward letter soup ("h t t p ...").
 # We strip them from the SPOKEN text only (the on-screen reply keeps them).
@@ -58,16 +59,17 @@ async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
 
 
 def _gtts_hindi_fallback(text: str) -> bytes:
-    """Free Google TTS Hindi — natural, better than Kokoro robotic fallback."""
+    """Free Google TTS — for Hinglish we use English (en) so it doesn't read
+    Roman Hindi with a USA accent. Natural enough as a fallback."""
     from gtts import gTTS
 
     buf = io.BytesIO()
-    gTTS(text=text, lang="hi", slow=False).write_to_fp(buf)
+    gTTS(text=text, lang="en", slow=False).write_to_fp(buf)
     return buf.getvalue()
 
 
 def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
-    """Offline Kokoro Hindi (hm_psi) — last resort if both cloud TTS fail.
+    """Offline Kokoro English-India (en IN) — last resort for Hinglish text.
 
     Produces a raw float waveform; we wrap it as 16-bit PCM WAV.
     """
@@ -76,9 +78,9 @@ def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
 
     from kokoro import KPipeline
 
-    pipe = KPipeline(lang_code="h")  # 'h' = Hindi
+    pipe = KPipeline(lang_code="e")  # 'e' = English (kokoro has no hi/IN; en is closest)
     audio_segments = []
-    generator = pipe(text, voice="hm_psi", speed=1.0)
+    generator = pipe(text, voice="en_IN_001", speed=1.0)
     for _i, (gs, ps, audio) in enumerate(generator):
         audio_segments.append(audio)
     if not audio_segments:
