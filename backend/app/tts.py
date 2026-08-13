@@ -50,9 +50,9 @@ async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
             communicate = edge_tts.Communicate(
                 text,
                 voice,
-                rate="fast",
+                rate="+15%",
                 volume="+20%",
-                pitch="+3Hz",
+                pitch="-6Hz",
             )
             buf = io.BytesIO()
             async for chunk in communicate.stream():
