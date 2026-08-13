@@ -1,6 +1,18 @@
 """Lucifer backend configuration (env-driven, .env or env vars)."""
 from __future__ import annotations
 import os
+from pathlib import Path
+
+# Load .env from the backend dir (where run.py lives) so SARVAM_API_KEY etc.
+# are available without exporting them into the shell.
+try:
+    from dotenv import load_dotenv
+    _env = Path(__file__).resolve().parent.parent / ".env"
+    if _env.exists():
+        load_dotenv(_env)
+except Exception:  # dotenv optional; env vars may already be set
+    pass
+
 from pydantic import BaseModel, Field
 
 

@@ -49,16 +49,26 @@ def _load_persona() -> str:
     there and it is picked up on next restart. Until then we fall back to a
     neutral default so the backend never hard-codes an old persona.
     """
-    p = Path(__file__).parent / "PERSONA.md"
+    base = Path(__file__).parent
+    p = base / "PERSONA.md"
     if p.exists():
-        return p.read_text(encoding="utf-8")
-    # Neutral default fallback (TTS-friendly, no hardcoded persona name).
-    return (
-        "You are a helpful, friendly voice assistant. "
-        "Reply in short, natural, spoken-language sentences that sound good "
-        "when read aloud by a text-to-speech engine. Keep replies concise and "
-        "conversational. Avoid emoji, markup, or stage directions."
-    )
+        persona = p.read_text(encoding="utf-8")
+    else:
+        # Neutral default fallback (TTS-friendly, no hardcoded persona name).
+        persona = (
+            "You are a helpful, friendly voice assistant. "
+            "Reply in short, natural, spoken-language sentences that sound good "
+            "when read aloud by a text-to-speech engine. Keep replies concise and "
+            "conversational. Avoid emoji, markup, or stage directions."
+        )
+    # Auto-load the self-improving slang bank (cron appends new words here).
+    sb = base / "slang_bank.md"
+    if sb.exists():
+        persona += (
+            "\n\n--- AUTO-LOADED SLANG BANK (use these words naturally in replies) ---\n"
+            + sb.read_text(encoding="utf-8")
+        )
+    return persona
 
 
 async def reply(user_text: str, history=None) -> str:
