@@ -65,16 +65,16 @@ async function askLucifer(text) {
   busy = true; setStatus("busy"); orb.classList.add("speaking");
   addLine("you", text);
   try {
-    const r = await fetch(API_BASE + "/chat", {
+    const r = await fetch(API_BASE + "/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    const data = await r.json();
-    const reply = data.reply || "…";
-    addLine("lu", reply);
+    if (!r.ok) throw new Error("chat failed");
+    const reply = await r.text();
+    addLine("lu", reply.trim());
     // speak
-    await speak(reply);
+    await speak(reply.trim());
   } catch (e) {
     addLine("err", "Connection error — backend down?");
   } finally {
