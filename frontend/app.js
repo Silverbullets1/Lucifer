@@ -124,19 +124,62 @@ function setupSpeech() {
   return true;
 }
 
+// Fallback: record via MediaRecorder -> backend /voice (whisper STT)
+let mediaRecorder = null, micStream = null, recTimer = null;
+async function startBackendSTT() {
+  if (busy) return;
+  listening = true; orb.classList.add("listening"); micBtn.classList.add("hold");
+  if (hint) hint.textContent = "🎙️ Recording… (whisper) bol bc";
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(micStream);
+  } catch (e) {
+    listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold");
+    if (hint) hint.textContent = "❌ Mic denied. Use TYPE.";
+    return;
+  }
+  const chunks = [];
+  mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+    const blob = new Blob(chunks, { type: "audio/webm" });
+    if (!blob.size) { resetMic(); return; }
+    busy = true; setStatus("busy"); orb.classList.add("speaking");
+    if (hint) hint.textContent = "🧠 Soch raha hoon…";
+    try {
+      const fd = new FormData(); fd.append("audio", blob, "speech.webm");
+      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      const d = await r.json();
+      if (d.text && d.text.trim()) { addLine("you", d.text); addLine("lu", d.reply || ""); await speak(d.reply || ""); }
+      else if (hint) hint.textContent = "🎤 Kuch sunai nhi — dobara bol bc.";
+    } catch (e) { if (hint) hint.textContent = "⚠️ Voice fail: " + e.message; }
+    finally { busy = false; setStatus("on"); orb.classList.remove("speaking"); resetMic(); }
+  };
+  mediaRecorder.start();
+  recTimer = setTimeout(() => { if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop(); }, 8000);
+}
+function resetMic() { listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold"); if (recTimer) { clearTimeout(recTimer); recTimer = null; } }
+
 function startListen() {
   if (busy) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
   if (hint) hint.textContent = "🎙️ Sun raha hoon… bol bc";
-  try { recog.start(); } catch (_) {}
+  // Prefer Web Speech (fast, native). If unsupported, use backend whisper.
+  if (recog) {
+    try { recog.start(); } catch (_) { startBackendSTT(); }
+  } else {
+    startBackendSTT();
+  }
 }
 function stopListen() {
   listening = false;
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
   try { recog && recog.stop(); } catch (_) {}
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+  if (recTimer) { clearTimeout(recTimer); recTimer = null; }
 }
 
 micBtn.addEventListener("click", () => {

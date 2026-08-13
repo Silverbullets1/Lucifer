@@ -191,6 +191,16 @@ async def voice(audio: UploadFile = File(...)):
     data = await audio.read()
     if not data:
         raise HTTPException(400, "empty audio")
+    return await _handle_voice(data)
+
+
+@app.get("/voice")
+async def voice_get():
+    """GET fallback so stale cached JS sending GET still works (returns hint)."""
+    return {"text": "", "reply": "", "audio_b64": "", "note": "use POST /voice with audio"}
+
+
+async def _handle_voice(data: bytes):
     # 1) STT
     try:
         text = transcribe(data, settings)

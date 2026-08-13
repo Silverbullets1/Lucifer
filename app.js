@@ -1,7 +1,7 @@
 // LUCIFER — Frontend logic (mic via backend whisper STT, reliable)
 // Served from same origin as backend (/app, /app.js) so CORS + mic permission work.
 
-const API_BASE = "";  // same-origin (backend serves this page)
+const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";  // backend tunnel (Vercel is static-only)
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
