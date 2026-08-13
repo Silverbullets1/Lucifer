@@ -2,11 +2,5 @@
   "version": 2,
   "buildCommand": null,
   "outputDirectory": ".",
-  "functions": {
-    "api/[...slug].js": {
-      "runtime": "nodejs20.x",
-      "memory": 256,
-      "maxDuration": 30
-    }
-  }
+  "framework": null
 }
