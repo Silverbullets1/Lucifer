@@ -109,18 +109,7 @@ def _sarvam_tts(text: str, settings: Settings) -> bytes:
     if not audios:
         raise RuntimeError("Sarvam returned no audio")
     audio = base64.b64decode(audios[0])
-    # Speed up + brighten Kabir for a punchier, energetic Devil vibe.
-    # atempo 1.15 = ~15% faster; highpass removes mud -> brighter/energetic.
-    try:
-        proc = subprocess.run(
-            ["ffmpeg", "-y", "-i", "pipe:0", "-af",
-             "highpass=f=120,atempo=1.15", "-f", "mp3", "pipe:1"],
-            input=audio, capture_output=True, timeout=30,
-        )
-        if proc.returncode == 0 and proc.stdout:
-            audio = proc.stdout
-    except Exception as e:
-        log.warning("kabir speedup ffmpeg skipped: %s", e)
+    # Raw Sarvam audio, no speed/tonal modification.
     return audio
 
 
