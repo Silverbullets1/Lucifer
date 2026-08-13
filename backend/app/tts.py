@@ -37,11 +37,47 @@ def _get_pipe(lang_code: str):
 
 
 async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
+    return await _edge_tts_ssml(text, voice, retries)
+
+
+# Emotion -> Edge express-as style + prosody (pitch%, rate, volume)
+# Gives the voice real warmth/playfulness/sadness instead of flat reading.
+_EMOTION_MAP = {
+    "loving":   ("affectionate", "+6%", "0.95"),
+    "playful":  ("cheerful",    "+9%", "1.05"),
+    "teasing":  ("gentle",      "+7%", "1.0"),
+    "sad":      ("sad",         "-10%", "0.85"),
+    "angry":    ("angry",       "+4%", "1.1"),
+    "calm":     ("calm",        "0%",  "0.9"),
+    "excited":  ("cheerful",    "+12%", "1.12"),
+    "neutral":  (None,          "0%",  "1.0"),
+}
+
+
+def _build_ssml(text: str, voice: str, emotion: str = "neutral") -> str:
+    style, pitch, rate = _EMOTION_MAP.get(emotion, _EMOTION_MAP["neutral"])
+    # strip inline EMOTION tag if present in text
+    clean = re.sub(r"<EMOTION:[a-z]+>\s*$", "", text.strip())
+    if style:
+        inner = f'<mstts:express-as style="{style}">{clean}</mstts:express-as>'
+    else:
+        inner = clean
+    return (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+        'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="hi-IN">'
+        f'<voice name="{voice}"><prosody pitch="{pitch}" rate="{rate}">'
+        f'{inner}</prosody></voice></speak>'
+    )
+
+
+async def _edge_tts_ssml(text: str, voice: str, retries: int = 3,
+                         emotion: str = "neutral") -> bytes:
     import edge_tts
+    ssml = _build_ssml(text, voice, emotion)
     last_err = None
     for attempt in range(1, retries + 1):
         try:
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(ssml, voice)
             buf = io.BytesIO()
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
@@ -65,20 +101,21 @@ def _gtts_hindi_fallback(text: str) -> bytes:
     return buf.getvalue()
 
 
-async def synthesize(text: str, settings: Settings) -> bytes:
-    """ALL replies spoken by Arjun (hi-IN). No English/USA voice, ever.
-    Fallback chain: Edge Arjun -> gTTS Hindi (natural) -> Kokoro Hindi (offline)."""
+async def synthesize(text: str, settings: Settings, emotion: str = "neutral") -> bytes:
+    """ALL replies spoken by Swara (hi-IN). Emotion shapes the voice via SSML.
+    Fallback chain: Edge Swara(SSML) -> gTTS Hindi (natural) -> Kokoro Hindi."""
     if not text.strip():
         return b""
+    clean = re.sub(r"<EMOTION:[a-z]+>\s*$", "", text.strip())
     try:
-        return await _edge_tts(text, EDGE_HI_VOICE)
+        return await _edge_tts_ssml(clean, EDGE_HI_VOICE, emotion=emotion)
     except Exception as e:
         log.warning("Edge TTS failed (%s); trying gTTS Hindi", e)
         try:
-            return await asyncio.to_thread(_gtts_hindi_fallback, text)
+            return await asyncio.to_thread(_gtts_hindi_fallback, clean)
         except Exception as e2:
             log.warning("gTTS failed (%s); falling back to Kokoro Hindi", e2)
-            return await asyncio.to_thread(_kokoro_hindi_fallback, text, settings)
+            return await asyncio.to_thread(_kokoro_hindi_fallback, clean, settings)
 
 
 def _to_wav_bytes(audio_float, sample_rate: int) -> bytes:

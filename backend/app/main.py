@@ -29,6 +29,18 @@ log = logging.getLogger("lucifer")
 
 import re as _re
 
+# Trailing <EMOTION:..> tag the LLM appends so the voice can be shaped.
+_EMOTION_TAG = _re.compile(r"\s*<EMOTION:([a-z]+)>\s*$", _re.IGNORECASE)
+
+
+def _split_emotion(text: str):
+    """Return (clean_text, emotion) by extracting a trailing <EMOTION:..> tag."""
+    m = _EMOTION_TAG.search(text or "")
+    if m:
+        return text[:m.start()].strip(), m.group(1).lower()
+    return (text or "").strip(), "neutral"
+
+
 # --- Reply sanitizer: strip emoji (TTS can't speak them) + any leftover
 # problematic tokens (Muskan / whisky) the model may hallucinate.
 # NOTE: Devil's Queen uses spoken action markers (hugs you, kisses your
@@ -128,9 +140,10 @@ async def voice(audio: UploadFile = File(...)):
         log.exception("llm failed")
         raise HTTPException(500, f"llm: {e}")
     log.info("LUCIFER: %s", reply)
-    # 3) TTS
+    # 3) TTS (shape voice by emotion tag if present)
     try:
-        wav_bytes = await synthesize(reply, settings)
+        clean, emotion = _split_emotion(reply)
+        wav_bytes = await synthesize(clean, settings, emotion=emotion)
     except Exception as e:
         log.exception("tts failed")
         return {"text": text, "reply": reply, "audio_b64": ""}
@@ -139,9 +152,11 @@ async def voice(audio: UploadFile = File(...)):
 
 @app.post("/tts")
 async def tts(req: ChatReq):
-    """Text-in -> TTS audio (wav bytes). Used by the web frontend to speak replies."""
+    """Text-in -> TTS audio (wav bytes). Used by the web frontend to speak replies.
+    If the text contains a trailing <EMOTION:..> tag, the voice is shaped by it."""
     try:
-        wav_bytes = await synthesize(req.text, settings)
+        clean, emotion = _split_emotion(req.text)
+        wav_bytes = await synthesize(clean, settings, emotion=emotion)
     except Exception as e:
         log.exception("tts failed")
         raise HTTPException(500, f"tts: {e}")
@@ -168,7 +183,8 @@ async def ws(ws: WebSocket):
                 continue
             reply = await brain_reply(text)
             await ws.send_json({"type": "llm", "text": sanitize_reply(reply)})
-            wav = await synthesize(sanitize_reply(reply), settings)
+            clean, emotion = _split_emotion(reply)
+            wav = await synthesize(clean, settings, emotion=emotion)
             await ws.send_bytes(wav)
     except WebSocketDisconnect:
         pass
