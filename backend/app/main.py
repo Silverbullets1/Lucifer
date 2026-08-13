@@ -15,7 +15,7 @@ from typing import AsyncGenerator
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -38,6 +38,21 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return {"status": "ok", "model": settings.model, "device": settings.device}
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return """
+    <!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>LUCIFER — Online</title>
+    <style>body{background:#05060a;color:#ff2d55;font-family:monospace;
+    display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+    .box{text-align:center}.glow{font-size:3rem;text-shadow:0 0 20px #ff2d55}
+    .sub{color:#7b2dff;margin-top:1rem}.tag{color:#00e5ff}</style></head>
+    <body><div class="box"><div class="glow">🔥 LUCIFER</div>
+    <div class="sub">Voice Assistant backend is <span class="tag">ONLINE</span></div>
+    <div class="sub">Brain: tencent/hy3:free · TTS: Kokoro (male)</div></div></body></html>
+    """
 
 
 class ChatReq(BaseModel):
