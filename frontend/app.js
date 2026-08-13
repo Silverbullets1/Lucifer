@@ -2,8 +2,8 @@
 // Talks to backend via Cloudflare tunnel (working). Vercel proxy had POST 404, reverted.
 // Mic uses browser Web Speech API (Hindi + English). Text fallback always works.
 
-// ===== CONFIG: backend via Cloudflare tunnel (working) =====
-const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";   // <-- your tunnel URL
+// ===== CONFIG: backend via Vercel serverless proxy (api/[...slug].js) — permanent, no Cloudflare, no OCI ports =====
+const API_BASE = "";   // fetch("/api/voice") -> Vercel function -> backend tunnel
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
