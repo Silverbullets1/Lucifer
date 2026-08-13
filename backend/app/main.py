@@ -40,11 +40,75 @@ _EMOJI_RE = _re.compile(
 # Only hard-banned leftovers (not part of Devil's Queen persona):
 _BANNED = _re.compile(r"\b(muskan|whisky|whiskey)\b", _re.IGNORECASE)
 
+# --- HINGLISH WORD-SPLITTER -------------------------------------------------
+# upstage free model often GLUES Roman-Hindi words together (hellojaan,
+# kaisehotum). We greedily re-segment glued tokens using a known-word
+# dictionary so the reply reads naturally and TTS doesn't mangle it.
+_HINGLISH_WORDS = set("""
+hello hi hey hellow hlo jaan jan raja king sher sona babu sweetheart sam my
+kaise kaisi kaisa ho hai hain hoon hun the thi tha bhi to aur ek do teen chaar
+paanch chhe saath aath nau das suna sunao sunaye sunayi diya de do dena batao
+bata na kya haal chaal halchal chal raha rehta rehti aaj kal abhi phir wapas
+thoda bahut samay time plan mast accha achha badhiya theek sahi pyaar pyar love
+miss karo karto bhi re baba yaar friend dost team dark scripts queen devil mera
+meri mere tumhara tumhari tumhre apna apni baat baatein bol bolta bolkar soch
+samajh dekh dikha aankh dil dimag khush dukh gussa sanam tum tu aap kyun kaun
+kab kahan kaise kuch sab koi ye vo woh apan hum hai hote the matlab fir se aage
+peeche upar niche andar bahar sath saath mein par le liye gaya gayi gaya gaya
+karta karti karte karna aati aata aate jaati jaata jaate rahi raha rahe aayi aaya
+aaye hui thi thi thi thi bolti boli bole aati jati jati aati bolu bolo bolna
+sun lo suno sunna sun liya dekho dekhna dekhti dekhta pucho puchna puchta puchi
+laga lagao lagti lagta laga lage chala chali chale chalte chalu karu karu kari
+kare kaam kama karam baat baate baaten baato pyari pyare sundar suhani suhana
+apne apni tumhe tumko mujhe mujhko use usko ise unko unhe hame hamko aapko
+tumhari tumhare tumhari meri meri se ki ko ka ke mein par tak bhi hi to bhi
+kaisi kaisa kaisi kaise kahan kahaan kabhi kabhi kabhi kabhi thoda thodi thode
+bahut bahut bahut zyada kam jyada jyaada bilkul ekdam ek dum dum bhar poora puri
+purana purani naya nayi gaana gana gaane gaana gane suna sunayi sunai suni sunte
+pyaar mohabbat ishq dil dhadkan saans saanson jeene jina zindagi zindgi jeevan
+sochte sochta sochti samjha samjho samajhna samajhti samajhta yaad yaadein
+yaadon bhool bhuli bhul gayi bhul gaya bhul gaye ro rota roti rote hansee hansi
+hans hansna hansti hanske rona roya royi roye muskura muskurahat muskurahat
+khushi khushiyaan khush dukhi dukh takleef pareshani gussa ghussa naraz naraz
+narazgi pyaar mohabbat chahta chahti chahte chahta chahna sona soti sote sota
+kaam kam kar rahe ho the tum aaj kal ab subah shaam raat din savera subah
+sakal sukoon aaram aaraam thakan thake thaki thake hue hue thi thi thi thi
+""".split())
+
+_MAX_WORD = 14
+
+def _segment_token(tok: str) -> str:
+    """Greedy longest-match segmentation of one glued token (no punctuation)."""
+    i, n, out = 0, len(tok), []
+    while i < n:
+        matched = ""
+        for L in range(min(_MAX_WORD, n - i), 0, -1):
+            w = tok[i:i + L]
+            if w in _HINGLISH_WORDS:
+                matched = w
+                break
+        if matched:
+            out.append(matched)
+            i += len(matched)
+        else:
+            out.append(tok[i])
+            i += 1
+    return " ".join(out)
+
+_TOKEN_RE = _re.compile(r"[A-Za-z]+")
+
+def _fix_hinglish_spacing(text: str) -> str:
+    """Re-segment glued Roman-Hindi runs while leaving punctuation/emoji alone."""
+    return _TOKEN_RE.sub(lambda m: _segment_token(m.group(0)), text)
+
 def sanitize_reply(text: str) -> str:
     if not text:
         return text
     text = _EMOJI_RE.sub("", text)              # remove all emoji
     text = _BANNED.sub("", text)                 # remove hard-banned tokens
+    text = _fix_hinglish_spacing(text)          # split glued words (hellojaan)
+    # ensure a space after punctuation when followed by a letter
+    text = _re.sub(r"([,?!;:])([A-Za-z])", r"\1 \2", text)
     text = _re.sub(r"\s{2,}", " ", text).strip()  # collapse extra spaces
     return text
 
