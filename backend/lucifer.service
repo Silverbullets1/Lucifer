@@ -1,0 +1,15 @@
+[Unit]
+Description=Lucifer Voice Assistant Backend
+After=network.target ollama.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Lucifer/backend
+Environment=PATH=/home/ubuntu/Lucifer/backend/.venv/bin:/usr/bin:/bin
+ExecStart=/home/ubuntu/Lucifer/backend/.venv/bin/python run.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

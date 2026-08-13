@@ -1,0 +1,31 @@
+# Build Windows .exe for Lucifer (Linux can't cross-compile to Windows).
+name: build-windows
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+      - run: flutter pub get
+      - name: Build Windows executable
+        run: flutter build windows --release
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          PORCUPINE_KEY: ${{ secrets.PORCUPINE_KEY }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucifer-windows
+          path: app/build/windows/x64/runner/Release/

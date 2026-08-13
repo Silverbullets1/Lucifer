@@ -1,0 +1,32 @@
+name: lucifer_voice
+description: "Lucifer — cross-platform voice assistant (Windows + Android). Flutter frontend that streams mic audio to the Lucifer backend and plays back TTS audio."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.4.0
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  # HTTP + websocket to the backend
+  dio: ^5.4.0
+  web_socket_channel: ^3.0.0
+  # Audio capture + playback
+  record: ^5.1.0
+  audioplayers: ^6.0.0
+  # Wake word (Picovoice Porcupine) — free tier; set access key via env/build
+  porcupine_flutter: ^3.0.0
+  # State
+  provider: ^6.1.0
+  flutter_dotenv: ^5.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
