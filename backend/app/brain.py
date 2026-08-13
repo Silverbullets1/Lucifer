@@ -7,7 +7,7 @@ tencent/hy3:free is a *reasoning* model: it streams a `reasoning` field
 then the actual `content`. We read both; the assistant reply is `content`.
 """
 from __future__ import annotations
-import json, logging, os, sys, re, subprocess, asyncio
+import json, logging, os, sys, re, subprocess, asyncio, shlex
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -78,11 +78,36 @@ def _load_persona() -> str:
     return persona
 
 
-# --- Live web search (DuckDuckGo Instant Answer + Wikipedia) for GK/current-affairs ---
-_GK_HINTS = re.compile(
-    r"\b(president|pm|prime minister|chief minister|cm|who is|who was|kahan|kaha|"
-    r"kaun|kya hai|current|latest|2024|2025|2026|gold rate|price|winner|"
-    r"olympic|world cup|election|minister|capital|population|weather|news)\b",
+# --- Live web search trigger words (English + Hindi + Hinglish) ---
+# Per spec: trigger ONLY on real-time / current / time-sensitive topics.
+# Bare question words (who/what/kaun/kya) do NOT trigger by themselves.
+_WEB_TRIGGERS = re.compile(
+    r"\b(?:"
+    # time & freshness
+    r"latest|newest|new|current|now|today|tonight|tomorrow|yesterday|"
+    r"this\s+morning|this\s+afternoon|this\s+evening|this\s+week|this\s+month|this\s+year|"
+    r"recently|recent|updated?|live|breaking|trending|ongoing|"
+    r"aaj(?:\s+ka|\s+ki)?|abhi(?:\s+ka|\s+tak|\s+abhi)?|filhal|is\s+wakt|iss\s+time|"
+    r"kal|parso|is\s+hafte|iss\s+week|is\s+mahine|iss\s+month|is\s+saal|iss\s+year|"
+    r"nay(?:a|e|i)|fresh|taza(?:r?|khabar)?|"
+    # information lookup
+    r"news|announcement|official|docs?|documentation|release|launch|changelog|roadmap|"
+    r"version|patch|api|khabar|adhikarik|document|"
+    # finance & shopping
+    r"price|cost|discount|sale|offer|stock\s+price|market|crypto|bitcoin|exchange\s+rate|"
+    r"daam|kimat|keemat|kitne\s+ka|kitni\s+ki|share\s+price|rate|"
+    # sports & events
+    r"score|result|match(?:\s+ka\s+result)?|fixture|schedule|standings|ranking|"
+    r"tournament|live\s+score|natija|kab\s+hai|"
+    # weather & time
+    r"weather|forecast|temperature|rain|time|date|timezone|"
+    r"mausam|barish|garmi|thand|taapmaan|samay|tareekh|"
+    # technology
+    r"github|repository|repo|package|npm|pip|sdk|framework|library|model|ai\s+model|"
+    # government & public info
+    r"election|policy|law|notification|vacancy|admit\s+card|exam\s+result|"
+    r"chunav|kanoon|bharti|sarkari"
+    r")\b",
     re.I,
 )
 
@@ -90,15 +115,14 @@ _GK_HINTS = re.compile(
 def _ddg_instant(q: str) -> str:
     try:
         out = subprocess.run(
-            ["curl", "-s", "--max-time", "12",
-             f"https://api.duckduckgo.com/?q={subprocess.quote(q)}&format=json&no_html=1"],
-            capture_output=True, text=True, timeout=15,
+            ["curl", "-s", "--max-time", "6",
+             f"https://api.duckduckgo.com/?q={shlex.quote(q)}&format=json&no_html=1"],
+            capture_output=True, text=True, timeout=8,
         ).stdout
         d = json.loads(out)
         ans = (d.get("AbstractText") or "").strip()
         if ans:
             return ans
-        # related topics as fallback
         for t in d.get("RelatedTopics", [])[:3]:
             if isinstance(t, dict) and t.get("Text"):
                 return t["Text"]
@@ -110,15 +134,14 @@ def _ddg_instant(q: str) -> str:
 def _wiki_search(q: str) -> str:
     try:
         out = subprocess.run(
-            ["curl", "-s", "--max-time", "12",
+            ["curl", "-s", "--max-time", "6",
              f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch="
-             f"{subprocess.quote(q)}&format=json&srlimit=1"],
-            capture_output=True, text=True, timeout=15,
+             f"{shlex.quote(q)}&format=json&srlimit=1"],
+            capture_output=True, text=True, timeout=8,
         ).stdout
         d = json.loads(out)
         hits = d.get("query", {}).get("search", [])
         if hits:
-            # strip html tags from snippet
             snip = re.sub(r"<[^>]+>", "", hits[0].get("snippet", ""))
             return snip
     except Exception as e:
@@ -135,9 +158,30 @@ def web_fact(query: str) -> str:
     return ans
 
 
+# Question words (who/what/kaun/kya...): per revised rule these DO trigger
+# web search — factual questions need live data. Self-reference is excluded so
+# the bot doesn't "search the web" about itself.
+_QUESTION_WORDS = re.compile(
+    r"\b(?:who|what|which|when|where|why|how|whom|whose|"
+    r"kaun|kaunsa|kaunsi|kya|kab|kahan|kahaan|kyun|kaise|"
+    r"kitna|kitni|kitne|kitne din|kitni der)\b",
+    re.I,
+)
+_SELF_REF = re.compile(
+    r"\b(?:tu|tum|tumhara|tumhari|you|your|yourself|"
+    r"lucifer|devil|apna|apni|main|mein|i am|mera|meri)\b",
+    re.I,
+)
+
+
 def needs_web(user_text: str) -> bool:
-    """Heuristic: does this look like a GK / current-affairs question?"""
-    return bool(_GK_HINTS.search(user_text)) and len(user_text.split()) >= 3
+    """Web search triggers on: (a) any time-sensitive / topic trigger word, OR
+    (b) a question word about something other than the bot itself."""
+    if _WEB_TRIGGERS.search(user_text):
+        return True
+    if _QUESTION_WORDS.search(user_text) and not _SELF_REF.search(user_text):
+        return True
+    return False
 
 
 async def reply(user_text: str, history=None) -> str:
@@ -146,7 +190,7 @@ async def reply(user_text: str, history=None) -> str:
     persona = _load_persona()
     messages = [{"role": "system", "content": persona}]
 
-    # Live web lookup for GK / current-affairs questions.
+    # Live web lookup for real-time / current-affairs questions.
     web_ctx = ""
     if needs_web(user_text):
         fact = await asyncio.to_thread(web_fact, user_text)
@@ -155,7 +199,14 @@ async def reply(user_text: str, history=None) -> str:
                 f"\n\n--- LIVE WEB FACT (verified just now via web search, "
                 f"trust this over memory) ---\n{fact}\n"
             )
-            messages[0]["content"] += web_ctx
+        else:
+            web_ctx = (
+                "\n\n--- WEB SEARCH ATTEMPTED, NO LIVE RESULT ---\n"
+                "You tried to fetch live/current info but got nothing. "
+                "Do NOT guess time-sensitive facts. Tell the user (in Hinglish) "
+                "you couldn't pull live info right now.\n"
+            )
+        messages[0]["content"] += web_ctx
 
     if history:
         messages.extend(history)
@@ -180,13 +231,20 @@ async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
     persona = _load_persona()
     messages = [{"role": "system", "content": persona}]
 
-    # Live web lookup for GK / current-affairs questions.
+    # Live web lookup for real-time / current-affairs questions.
     if needs_web(user_text):
         fact = await asyncio.to_thread(web_fact, user_text)
         if fact:
             messages[0]["content"] += (
                 f"\n\n--- LIVE WEB FACT (verified just now via web search, "
                 f"trust this over memory) ---\n{fact}\n"
+            )
+        else:
+            messages[0]["content"] += (
+                "\n\n--- WEB SEARCH ATTEMPTED, NO LIVE RESULT ---\n"
+                "You tried to fetch live/current info but got nothing. "
+                "Do NOT guess time-sensitive facts. Tell the user (in Hinglish) "
+                "you couldn't pull live info right now.\n"
             )
 
     if history:
