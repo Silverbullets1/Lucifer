@@ -16,14 +16,21 @@ def _get_model(settings: Settings):
 
 
 def transcribe(audio_bytes: bytes, settings: Settings) -> str:
-    model = _get_model(settings)
-    # faster-whisper accepts a path or file-like; write to temp for safety
-    import tempfile, os
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+    import tempfile, os, subprocess
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
         f.write(audio_bytes)
         path = f.name
+    wav_path = path.replace(".webm", ".wav")
     try:
-        segments, _ = model.transcribe(path, language="en", beam_size=5)
+        # Convert to 16kHz mono wav (whisper's preferred, avoids decode errors)
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True, timeout=30,
+        )
+        model = _get_model(settings)
+        segments, _ = model.transcribe(wav_path, language="en", beam_size=5)
         return "".join(seg.text for seg in segments).strip()
     finally:
         os.unlink(path)
+        if os.path.exists(wav_path):
+            os.unlink(wav_path)
