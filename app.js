@@ -1,7 +1,10 @@
-// LUCIFER — Frontend logic (mic via backend whisper STT, reliable)
-// Served from same origin as backend (/app, /app.js) so CORS + mic permission work.
+// LUCIFER — Frontend logic
+// Talks to backend (Cloudflare tunnel) at API_BASE.
+// Mic uses browser Web Speech API (Hindi + English). Text fallback always works.
 
-const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";  // backend tunnel (Vercel is static-only)
+// ===== CONFIG: set your backend tunnel URL here =====
+const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";
+// ====================================================
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
@@ -11,16 +14,20 @@ const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 
 let audioEl = new Audio();
-let listening = false, busy = false, mediaRecorder = null, micStream = null, recTimer = null;
+let recog = null, listening = false, busy = false;
 
+// ---------- status ----------
 function setStatus(state) {
   dot.className = "dot" + (state === "on" ? " on" : state === "busy" ? " busy" : "");
   statusText.textContent = state === "on" ? "online" : state === "busy" ? "thinking…" : "offline";
 }
 
-// waveform (visual only)
+// ---------- waveform ----------
 const cv = $("wave"), cx = cv.getContext("2d");
-function sizeCanvas() { cv.width = cv.clientWidth * devicePixelRatio; cv.height = cv.clientHeight * devicePixelRatio; }
+function sizeCanvas() {
+  cv.width = cv.clientWidth * devicePixelRatio;
+  cv.height = cv.clientHeight * devicePixelRatio;
+}
 window.addEventListener("resize", sizeCanvas); sizeCanvas();
 let phase = 0;
 function drawWave(active) {
@@ -33,8 +40,8 @@ function drawWave(active) {
   for (let x = 0; x <= w; x += 4) {
     const t = x / w;
     const amp = active ? (Math.sin(t * 12 + phase) * 0.5 + 0.5) * (h * 0.32) : (Math.sin(t * 6 + phase) * 0.5 + 0.5) * (h * 0.06);
-    const y = mid + Math.sin(t * (active ? 18 : 5) + phase) * amp
-    cx.lineTo(x, y);
+    const y = mid + Math.sin(t * (active ? 18 : 5) + phase) * amp;
+    x === 0 ? cx.moveTo(x, y) : cx.lineTo(x, y);
   }
   cx.stroke();
   phase += active ? 0.25 : 0.06;
@@ -42,15 +49,17 @@ function drawWave(active) {
 }
 drawWave(false);
 
+// ---------- transcript ----------
 function addLine(who, text) {
-  if (hint) hint.remove();
+  if (hint) { hint.remove(); }
   const p = document.createElement("p");
-  p.className = who === "you" ? "you" : who === "err" ? "err" : "lu";
-  p.textContent = (who === "you" ? "🧑 " : who === "err" ? "⚠️ " : "😈 ") + text;
+  p.className = who === "you" ? "you" : "lu";
+  p.textContent = (who === "you" ? "🧑 " : "😈 ") + text;
   transcript.appendChild(p);
   transcript.scrollTop = transcript.scrollHeight;
 }
 
+// ---------- backend calls ----------
 async function askLucifer(text) {
   if (!text || busy) return;
   busy = true; setStatus("busy"); orb.classList.add("speaking");
@@ -64,6 +73,7 @@ async function askLucifer(text) {
     if (!r.ok) throw new Error("chat failed");
     const reply = await r.text();
     addLine("lu", reply.trim());
+    // speak
     await speak(reply.trim());
   } catch (e) {
     addLine("err", "Connection error — backend down?");
@@ -89,102 +99,42 @@ async function speak(text) {
   }
 }
 
-// ---------- MIC: Web Speech (primary, accurate) + backend whisper (fallback) ----------
-let recog = null;
+// ---------- voice input (Web Speech API) ----------
 function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return false;
   recog = new SR();
-  recog.lang = "en-IN"; // Hinglish (Roman) — best for mixed Hindi+English
-  recog.interimResults = true;
+  recog.lang = "hi-IN"; // handles Hinglish; English words pass through
+  recog.interimResults = false;
   recog.continuous = false;
   recog.onresult = (e) => {
-    let txt = "";
-    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
-    txt = txt.trim();
-    if (txt) {
-      let p = transcript.querySelector(".you.interim");
-      if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
-      p.textContent = "🧑 " + txt;
-      transcript.scrollTop = transcript.scrollHeight;
-      if (e.results[0].isFinal) { recog._gotFinal = true; p.remove(); askLucifer(txt); stopListen(); }
-    }
+    const txt = e.results[0][0].transcript.trim();
+    if (txt) askLucifer(txt);
   };
-  recog.onerror = (ev) => {
-    const msg = ev && ev.error ? ev.error : "unknown";
-    if (msg === "not-allowed" || msg === "service-not-allowed") {
-      if (hint) hint.textContent = "❌ Mic blocked. Allow mic & retry, or TYPE.";
-    } else if (msg !== "no-speech" && msg !== "aborted") {
-      startBackendSTT(); // fallback to whisper on any real error
-    }
-    stopListen();
-  };
-  recog.onend = () => {
-    // Web Speech ended without delivering a final result (common on mobile) → whisper
-    if (listening && !busy && !recog._gotFinal) startBackendSTT();
-    else if (listening) stopListen();
-  };
+  recog.onerror = () => stopListen();
+  recog.onend = () => { if (listening) stopListen(); };
   return true;
 }
 
-async function startListen() {
-  if (busy || listening) return;
+function startListen() {
+  if (!recog || busy) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
-  hint.textContent = "🎙️ Sun raha hoon… bol bc (8s auto-stop)";
-  // Try Web Speech first (fast on Chrome). If it errors or ends with no result,
-  // the onerror/onend handlers below fall back to backend whisper.
-  if (recog) {
-    try { recog.start(); return; } catch (_) {}
-  }
-  startBackendSTT();
+  try { recog.start(); } catch (_) {}
 }
-
-// Whisper fallback (Firefox/Safari where Web Speech unsupported) — uses real mimeType
-async function startBackendSTT() {
-  if (busy || listening) return;
-  listening = true; orb.classList.add("listening"); micBtn.classList.add("hold");
-  hint.textContent = "🎙️ Recording… (whisper) bol bc";
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-  catch (e) { listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold"); if (hint) hint.textContent = "❌ Mic denied. Use TYPE."; return; }
-  let mr;
-  try { mr = new MediaRecorder(stream); } catch (e) { stream.getTracks().forEach(t=>t.stop()); if (hint) hint.textContent = "❌ MediaRecorder unsupported."; resetMic(); return; }
-  mediaRecorder = mr; micStream = stream;
-  const chunks = [];
-  mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  mr.onstop = async () => {
-    if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
-    const mime = mr.mimeType || "audio/webm";
-    const blob = new Blob(chunks, { type: mime });
-    if (!blob.size) { resetMic(); return; }
-    busy = true; setStatus("busy"); orb.classList.add("speaking");
-    hint.textContent = "🧠 Soch raha hoon…";
-    try {
-      const fd = new FormData(); fd.append("audio", blob, "speech");
-      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
-      if (!r.ok) throw new Error("voice failed " + r.status);
-      const d = await r.json();
-      if (d.text && d.text.trim()) { addLine("you", d.text); addLine("lu", d.reply || ""); await speak(d.reply || ""); }
-      else if (hint) hint.textContent = "🎤 Kuch sunai nhi — dobara bol bc.";
-    } catch (e) { addLine("err", "⚠️ Voice process fail: " + e.message); }
-    finally { busy = false; setStatus("on"); orb.classList.remove("speaking"); resetMic(); }
-  };
-  mr.start();
-  recTimer = setTimeout(() => { if (mr.state === "recording") mr.stop(); }, 8000);
-}
-
 function stopListen() {
-  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
-  if (recTimer) { clearTimeout(recTimer); recTimer = null; }
-}
-function resetMic() {
-  listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold");
+  listening = false;
+  orb.classList.remove("listening");
+  micBtn.classList.remove("hold");
+  try { recog && recog.stop(); } catch (_) {}
 }
 
 // ---------- events ----------
-micBtn.addEventListener("click", () => { listening ? stopListen() : startListen(); });
+micBtn.addEventListener("click", () => {
+  if (!recog) { alert("Mic speech not supported on this browser — use TYPE."); return; }
+  listening ? stopListen() : startListen();
+});
 textBtn.addEventListener("click", () => {
   typebox.hidden = !typebox.hidden;
   if (!typebox.hidden) textInput.focus();
@@ -193,10 +143,16 @@ sendBtn.addEventListener("click", () => {
   const v = textInput.value.trim();
   if (v) { askLucifer(v); textInput.value = ""; }
 });
-textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.click(); });
+textInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendBtn.click();
+});
 
 // ---------- boot ----------
-setupSpeech();
+const hasSpeech = setupSpeech();
+if (!hasSpeech) {
+  micBtn.title = "Mic not supported — use TYPE";
+}
+// health check
 fetch(API_BASE + "/health")
   .then((r) => r.json())
   .then(() => setStatus("on"))
