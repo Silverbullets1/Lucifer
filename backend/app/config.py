@@ -15,12 +15,10 @@ class Settings(BaseModel):
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
     stt_model: str = Field(default=os.getenv("STT_MODEL", "base"))    # tiny|base|small
-    # TTS = Kokoro, multilingual male voices for Lucifer.
-    # Hindi/Hinglish (Devanagari detected) -> hm_psi (natural human male, SAM's pick)
-    # English -> am_michael (warm, deep, trustworthy male)
+    # TTS VOICE POLICY (per SAM): ONLY Hindi/Hinglish via Arjun (Edge TTS).
+    # No English/USA-accent voice anywhere. tts_voice_hi kept only as offline
+    # fallback (Kokoro Hindi) if Edge TTS fails.
     tts_voice_hi: str = Field(default=os.getenv("TTS_VOICE_HI", "hm_psi"))
-    tts_voice_en: str = Field(default=os.getenv("TTS_VOICE_EN", "am_michael"))
-    tts_voice: str = Field(default=os.getenv("TTS_VOICE", "am_michael"))  # fallback
     # CORS (allow Flutter dev + Vercel frontend + local clients)
     cors_origins: list[str] = Field(default_factory=lambda: [
         o for o in (os.getenv("CORS_ORIGINS") or "*").split(",") if o
