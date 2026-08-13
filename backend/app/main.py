@@ -108,7 +108,7 @@ async def voice(audio: UploadFile = File(...)):
     log.info("LUCIFER: %s", reply)
     # 3) TTS
     try:
-        wav_bytes = synthesize(reply, settings)
+        wav_bytes = await synthesize(reply, settings)
     except Exception as e:
         log.exception("tts failed")
         return {"text": text, "reply": reply, "audio_b64": ""}
@@ -119,7 +119,7 @@ async def voice(audio: UploadFile = File(...)):
 async def tts(req: ChatReq):
     """Text-in -> TTS audio (wav bytes). Used by the web frontend to speak replies."""
     try:
-        wav_bytes = synthesize(req.text, settings)
+        wav_bytes = await synthesize(req.text, settings)
     except Exception as e:
         log.exception("tts failed")
         raise HTTPException(500, f"tts: {e}")
@@ -146,7 +146,7 @@ async def ws(ws: WebSocket):
                 continue
             reply = await brain_reply(text)
             await ws.send_json({"type": "llm", "text": reply})
-            wav = synthesize(reply, settings)
+            wav = await synthesize(reply, settings)
             await ws.send_bytes(wav)
     except WebSocketDisconnect:
         pass
