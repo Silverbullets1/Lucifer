@@ -36,14 +36,24 @@ def _get_pipe(lang_code: str):
     return _PIPES[lang_code]
 
 
-async def _edge_tts(text: str, voice: str) -> bytes:
+async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
     import edge_tts
-    communicate = edge_tts.Communicate(text, voice)
-    buf = io.BytesIO()
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            buf.write(chunk["data"])
-    return buf.getvalue()
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            communicate = edge_tts.Communicate(text, voice)
+            buf = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    buf.write(chunk["data"])
+            data = buf.getvalue()
+            if data:
+                return data
+            last_err = RuntimeError("empty audio from Edge")
+        except Exception as e:
+            last_err = e
+            log.warning("Edge TTS attempt %d/%d failed: %s", attempt, retries, e)
+    raise last_err or RuntimeError("edge_tts failed")
 
 
 def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
