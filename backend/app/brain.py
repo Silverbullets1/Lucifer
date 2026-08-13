@@ -7,7 +7,7 @@ tencent/hy3:free is a *reasoning* model: it streams a `reasoning` field
 then the actual `content`. We read both; the assistant reply is `content`.
 """
 from __future__ import annotations
-import json, logging, os, sys
+import json, logging, os, sys, re, subprocess, asyncio
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -78,11 +78,85 @@ def _load_persona() -> str:
     return persona
 
 
+# --- Live web search (DuckDuckGo Instant Answer + Wikipedia) for GK/current-affairs ---
+_GK_HINTS = re.compile(
+    r"\b(president|pm|prime minister|chief minister|cm|who is|who was|kahan|kaha|"
+    r"kaun|kya hai|current|latest|2024|2025|2026|gold rate|price|winner|"
+    r"olympic|world cup|election|minister|capital|population|weather|news)\b",
+    re.I,
+)
+
+
+def _ddg_instant(q: str) -> str:
+    try:
+        out = subprocess.run(
+            ["curl", "-s", "--max-time", "12",
+             f"https://api.duckduckgo.com/?q={subprocess.quote(q)}&format=json&no_html=1"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        d = json.loads(out)
+        ans = (d.get("AbstractText") or "").strip()
+        if ans:
+            return ans
+        # related topics as fallback
+        for t in d.get("RelatedTopics", [])[:3]:
+            if isinstance(t, dict) and t.get("Text"):
+                return t["Text"]
+    except Exception as e:
+        log.warning("web_fact ddg failed: %s", e)
+    return ""
+
+
+def _wiki_search(q: str) -> str:
+    try:
+        out = subprocess.run(
+            ["curl", "-s", "--max-time", "12",
+             f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch="
+             f"{subprocess.quote(q)}&format=json&srlimit=1"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        d = json.loads(out)
+        hits = d.get("query", {}).get("search", [])
+        if hits:
+            # strip html tags from snippet
+            snip = re.sub(r"<[^>]+>", "", hits[0].get("snippet", ""))
+            return snip
+    except Exception as e:
+        log.warning("web_fact wiki failed: %s", e)
+    return ""
+
+
+def web_fact(query: str) -> str:
+    """Live web lookup for GK / current-affairs questions. Returns text or ''."""
+    q = query.strip()
+    ans = _ddg_instant(q)
+    if not ans:
+        ans = _wiki_search(q)
+    return ans
+
+
+def needs_web(user_text: str) -> bool:
+    """Heuristic: does this look like a GK / current-affairs question?"""
+    return bool(_GK_HINTS.search(user_text)) and len(user_text.split()) >= 3
+
+
 async def reply(user_text: str, history=None) -> str:
     """One-shot reply (non-streaming)."""
     api_key, base = _resolve_creds()
     persona = _load_persona()
     messages = [{"role": "system", "content": persona}]
+
+    # Live web lookup for GK / current-affairs questions.
+    web_ctx = ""
+    if needs_web(user_text):
+        fact = await asyncio.to_thread(web_fact, user_text)
+        if fact:
+            web_ctx = (
+                f"\n\n--- LIVE WEB FACT (verified just now via web search, "
+                f"trust this over memory) ---\n{fact}\n"
+            )
+            messages[0]["content"] += web_ctx
+
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
@@ -105,6 +179,16 @@ async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
     api_key, base = _resolve_creds()
     persona = _load_persona()
     messages = [{"role": "system", "content": persona}]
+
+    # Live web lookup for GK / current-affairs questions.
+    if needs_web(user_text):
+        fact = await asyncio.to_thread(web_fact, user_text)
+        if fact:
+            messages[0]["content"] += (
+                f"\n\n--- LIVE WEB FACT (verified just now via web search, "
+                f"trust this over memory) ---\n{fact}\n"
+            )
+
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
