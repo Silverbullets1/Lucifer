@@ -153,6 +153,7 @@ async def chat(req: ChatReq):
     """Text-in -> text-out (used for quick testing / non-voice mode)."""
     try:
         reply = await brain_reply(req.text, req.history or [])
+        reply = sanitize_reply(reply)
     except Exception as e:
         log.exception("chat failed")
         raise HTTPException(500, str(e))
@@ -163,9 +164,21 @@ async def chat(req: ChatReq):
 async def chat_stream(req: ChatReq):
     """Stream the Lucifer reply token-by-token (premium low-latency feel)."""
     async def gen():
+        buffer = ""
+        clean_prev = ""
         try:
             async for tok in brain_stream(req.text, req.history or []):
-                yield sanitize_reply(tok)
+                buffer += tok
+                # Re-sanitize the WHOLE buffer each tick so cross-token glued
+                # words (model emits "Hello" then "jaan" separately) get split.
+                clean = sanitize_reply(buffer)
+                if len(clean) > len(clean_prev):
+                    yield clean[len(clean_prev):]
+                    clean_prev = clean
+            # flush any trailing clean content
+            final = sanitize_reply(buffer)
+            if len(final) > len(clean_prev):
+                yield final[len(clean_prev):]
         except Exception as e:
             log.exception("stream failed")
             yield f"[error: {e}]"
