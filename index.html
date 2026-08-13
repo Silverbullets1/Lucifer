@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>LUCIFER — Voice Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="scanline"></div>
+
+  <main class="app">
+    <header class="top">
+      <div class="logo">
+        <span class="devil">😈</span>
+        <h1>LUCIFER</h1>
+        <span class="ver">v1.0</span>
+      </div>
+      <div class="status" id="status">
+        <span class="dot" id="dot"></span>
+        <span id="statusText">connecting…</span>
+      </div>
+    </header>
+
+    <section class="stage">
+      <div class="orb" id="orb">
+        <canvas id="wave"></canvas>
+        <div class="orb-core" id="orbCore">
+          <span class="mic-emoji">🎙️</span>
+        </div>
+      </div>
+      <div class="transcript" id="transcript">
+        <p class="hint" id="hint">Tap the orb and speak — Lucifer is listening…</p>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button class="btn mic" id="micBtn" title="Hold to talk">
+        <span class="ic">🎤</span>
+        <span class="lbl">TALK</span>
+      </button>
+      <button class="btn text" id="textBtn" title="Type instead">
+        <span class="ic">⌨️</span>
+        <span class="lbl">TYPE</span>
+      </button>
+    </section>
+
+    <div class="typebox" id="typebox" hidden>
+      <input id="textInput" placeholder="Type to Lucifer… (Hinglish / Hindi / English)" autocomplete="off" />
+      <button id="sendBtn">SEND</button>
+    </div>
+
+    <footer class="foot">
+      <span id="modelTag">brain: tencent/hy3:free</span>
+      <span class="sep">•</span>
+      <span id="voiceTag">voice: hm_psi / am_michael</span>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
