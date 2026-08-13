@@ -29,22 +29,22 @@ log = logging.getLogger("lucifer")
 
 import re as _re
 
-# --- Reply sanitizer: strip emoji + any visual/physical descriptors the model
-# may hallucinate (Muskan's face, whisky glass, etc.) so TTS only speaks words. ---
+# --- Reply sanitizer: strip emoji (TTS can't speak them) + any leftover
+# problematic tokens (Muskan / whisky) the model may hallucinate.
+# NOTE: Devil's Queen uses spoken action markers (hugs you, kisses your
+# forehead, winks) — those are spoken aloud and must NOT be stripped. ---
 _EMOJI_RE = _re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
     "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F"
     "\U0000200D\U00002702-\U000027B0]+", flags=_re.UNICODE)
-_BANNED_VISUAL = _re.compile(
-    r"\b(muskan|whisky|whiskey|chehra|face|smirk|grin|wink|eyes?|smile|glass|"
-    r"scenery|avatar|screen|looklike|looks? like|expression)\b",
-    _re.IGNORECASE)
+# Only hard-banned leftovers (not part of Devil's Queen persona):
+_BANNED = _re.compile(r"\b(muskan|whisky|whiskey)\b", _re.IGNORECASE)
 
 def sanitize_reply(text: str) -> str:
     if not text:
         return text
     text = _EMOJI_RE.sub("", text)              # remove all emoji
-    text = _BANNED_VISUAL.sub("", text)          # remove visual/physical words
+    text = _BANNED.sub("", text)                 # remove hard-banned tokens
     text = _re.sub(r"\s{2,}", " ", text).strip()  # collapse extra spaces
     return text
 
