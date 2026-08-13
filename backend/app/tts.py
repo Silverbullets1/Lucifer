@@ -28,7 +28,9 @@ EDGE_HI_VOICE = "hi-IN-SwaraNeural"  # Indian female (Devil's Queen), pure Hindi
 
 # URLs / links — Edge reads these as awkward letter soup ("h t t p ...").
 # We strip them from the SPOKEN text only (the on-screen reply keeps them).
-_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+# Covers http://, https://, AND malformed forms like https:www or http:site
+# (no slashes). \S+ stops at the next whitespace so we don't over-eat the reply.
+_URL_RE = re.compile(r"https?://\S+|https?:\S+|www\.\S+", re.IGNORECASE)
 
 # Trailing <EMOTION:..> tag the LLM appends so the voice can be shaped.
 _EMOTION_TAG_RE = re.compile(r"\s*<EMOTION:([a-z]+)>\s*$", re.IGNORECASE)
