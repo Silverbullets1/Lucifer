@@ -29,15 +29,12 @@ log = logging.getLogger("lucifer")
 
 import re as _re
 
-# Reply sanitizer: strip emoji (TTS can't speak them) + any leftover tags.
-# problematic tokens (Muskan / whisky) the model may hallucinate.
-# NOTE: Devil's Queen uses spoken action markers (hugs you, kisses your
-# forehead, winks) — those are spoken aloud and must NOT be stripped. ---
+# Reply sanitizer: strip emoji (TTS can't speak them) + hard-banned tokens.
 _EMOJI_RE = _re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
     "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F"
     "\U0000200D\U00002702-\U000027B0]+", flags=_re.UNICODE)
-# Only hard-banned leftovers (not part of Devil's Queen persona):
+# Hard-banned leftovers the model may hallucinate (not persona-specific):
 _BANNED = _re.compile(r"\b(muskan|whisky|whiskey)\b", _re.IGNORECASE)
 
 # --- HINGLISH WORD-SPLITTER -------------------------------------------------
@@ -50,7 +47,7 @@ kaise kaisi kaisa ho hai hain hoon hun the thi tha bhi to aur ek do teen chaar
 paanch chhe saath aath nau das suna sunao sunaye sunayi diya de do dena batao
 bata na kya haal chaal halchal chal raha rehta rehti aaj kal abhi phir wapas
 thoda bahut samay time plan mast accha achha badhiya theek sahi pyaar pyar love
-miss karo karto bhi re baba yaar friend dost team dark scripts queen devil mera
+miss karo karto bhi re baba yaar friend dost team mera
 meri mere tumhara tumhari tumhre apna apni baat baatein bol bolta bolkar soch
 samajh dekh dikha aankh dil dimag khush dukh gussa sanam tum tu aap kyun kaun
 kab kahan kaise kuch sab koi ye vo woh apan hum hai hote the matlab fir se aage

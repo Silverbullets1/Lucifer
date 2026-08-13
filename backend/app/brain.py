@@ -43,8 +43,22 @@ def _resolve_creds():
 
 
 def _load_persona() -> str:
+    """Load the active persona system prompt.
+
+    PERSONA.md is the live persona file — drop your new TTS-friendly script
+    there and it is picked up on next restart. Until then we fall back to a
+    neutral default so the backend never hard-codes an old persona.
+    """
     p = Path(__file__).parent / "PERSONA.md"
-    return p.read_text(encoding="utf-8") if p.exists() else "You are Lucifer."
+    if p.exists():
+        return p.read_text(encoding="utf-8")
+    # Neutral default fallback (TTS-friendly, no hardcoded persona name).
+    return (
+        "You are a helpful, friendly voice assistant. "
+        "Reply in short, natural, spoken-language sentences that sound good "
+        "when read aloud by a text-to-speech engine. Keep replies concise and "
+        "conversational. Avoid emoji, markup, or stage directions."
+    )
 
 
 async def reply(user_text: str, history=None) -> str:
