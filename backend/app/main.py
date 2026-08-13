@@ -74,12 +74,19 @@ sakal sukoon aaram aaraam thakan thake thaki thake hue hue thi thi thi thi
 _MAX_WORD = 14
 
 def _segment_token(tok: str) -> str:
-    """Greedy longest-match segmentation of one glued token (no punctuation)."""
-    i, n, out = 0, len(tok), []
+    """Conservative segmentation: only split a token when the ENTIRE token
+    decomposes into dictionary words (a genuinely glued compound like
+    'hellojaan'). If any char can't be matched, assume the token is already a
+    valid word and return it UNCHANGED — never break into single characters
+    (that was destroying correctly-spelled words like 'Haan' -> 'H aa n')."""
+    low = tok.lower()
+    n = len(low)
+    out = []
+    i = 0
     while i < n:
         matched = ""
         for L in range(min(_MAX_WORD, n - i), 0, -1):
-            w = tok[i:i + L]
+            w = low[i:i + L]
             if w in _HINGLISH_WORDS:
                 matched = w
                 break
@@ -87,9 +94,10 @@ def _segment_token(tok: str) -> str:
             out.append(matched)
             i += len(matched)
         else:
-            out.append(tok[i])
-            i += 1
-    return " ".join(out)
+            return tok  # not cleanly glued -> keep original, untouched
+    if len(out) >= 2:
+        return " ".join(out)
+    return tok  # single dictionary word -> leave as-is
 
 _TOKEN_RE = _re.compile(r"[A-Za-z]+")
 
