@@ -28,7 +28,8 @@ def transcribe(audio_bytes: bytes, settings: Settings) -> str:
             capture_output=True, timeout=30,
         )
         model = _get_model(settings)
-        segments, _ = model.transcribe(wav_path, language="en", beam_size=5)
+        # Auto-detect language (don't force "en" — Hinglish/Hindi needs multilingual)
+        segments, _ = model.transcribe(wav_path, beam_size=5)
         return "".join(seg.text for seg in segments).strip()
     finally:
         os.unlink(path)

@@ -89,58 +89,50 @@ async function speak(text) {
   }
 }
 
-// ---------- MIC: record via MediaRecorder -> backend /voice (whisper STT) ----------
+// ---------- MIC: Web Speech (primary, accurate) + backend whisper (fallback) ----------
+let recog = null;
+function setupSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return false;
+  recog = new SR();
+  recog.lang = "en-IN"; // Hinglish (Roman) — best for mixed Hindi+English
+  recog.interimResults = true;
+  recog.continuous = false;
+  recog.onresult = (e) => {
+    let txt = "";
+    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    txt = txt.trim();
+    if (txt) {
+      let p = transcript.querySelector(".you.interim");
+      if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
+      p.textContent = "🧑 " + txt;
+      transcript.scrollTop = transcript.scrollHeight;
+      if (e.results[0].isFinal) { p.remove(); askLucifer(txt); stopListen(); }
+    }
+  };
+  recog.onerror = (ev) => {
+    const msg = ev && ev.error ? ev.error : "unknown";
+    if (msg === "not-allowed" || msg === "service-not-allowed") {
+      if (hint) hint.textContent = "❌ Mic blocked. Allow mic & retry, or TYPE.";
+    } else if (msg !== "no-speech" && msg !== "aborted") {
+      startBackendSTT(); // fallback to whisper
+    }
+    stopListen();
+  };
+  recog.onend = () => { if (listening && !busy) stopListen(); };
+  return true;
+}
+
 async function startListen() {
   if (busy || listening) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
   hint.textContent = "🎙️ Sun raha hoon… bol bc (8s auto-stop)";
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch (e) {
-    listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold");
-    addLine("err", "❌ Mic permission denied. Allow mic in browser, ya TYPE use kar.");
-    return;
+  if (recog) {
+    try { recog.start(); return; } catch (_) {}
   }
-  try {
-    mediaRecorder = new MediaRecorder(micStream);
-  } catch (e) {
-    listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold");
-    addLine("err", "❌ MediaRecorder unsupported on this browser.");
-    micStream.getTracks().forEach((t) => t.stop());
-    return;
-  }
-  const chunks = [];
-  mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  mediaRecorder.onstop = async () => {
-    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
-    const blob = new Blob(chunks, { type: "audio/webm" });
-    if (!blob.size) { resetMic(); return; }
-    busy = true; setStatus("busy"); orb.classList.add("speaking");
-    hint.textContent = "🧠 Soch raha hoon…";
-    try {
-      const fd = new FormData();
-      fd.append("audio", blob, "speech.webm");
-      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
-      if (!r.ok) throw new Error("voice failed " + r.status);
-      const d = await r.json();
-      if (d.text && d.text.trim()) {
-        addLine("you", d.text);
-        addLine("lu", d.reply || "");
-        await speak(d.reply || "");
-      } else {
-        addLine("err", "🎤 Kuch sunai nhi diya — dobara bol bc.");
-      }
-    } catch (e) {
-      addLine("err", "⚠️ Voice process fail: " + e.message);
-    } finally {
-      busy = false; setStatus("on"); orb.classList.remove("speaking");
-      resetMic();
-    }
-  };
-  mediaRecorder.start();
-  recTimer = setTimeout(() => { if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop(); }, 8000);
+  startBackendSTT(); // no Web Speech → whisper
 }
 
 function stopListen() {
@@ -164,6 +156,7 @@ sendBtn.addEventListener("click", () => {
 textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.click(); });
 
 // ---------- boot ----------
+setupSpeech();
 fetch(API_BASE + "/health")
   .then((r) => r.json())
   .then(() => setStatus("on"))
