@@ -14,3 +14,6 @@ haan, ok, thik hai, shukriya, done, kar diya, chal, dekh, sun, bol, ghanta, bilk
 
 ## Fun / roast (affection, insult nahi)
 dhakkan, ulloo, gadha, bandar, oonth, feku, chindi, saste, tatti, chomu, paltu
+
+## 2026 Gen Z / Reels fresh (auto-discovered 2026-08-13, web search)
+cringe, bindaas, delulu, locked in, ate, drip, guap, simp, cheugy, ghanta (already had), sahi hai (already had), chill maar, jhakkas (already had), vella (already had), paltu (already had)

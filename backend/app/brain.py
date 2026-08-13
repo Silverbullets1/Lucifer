@@ -68,6 +68,13 @@ def _load_persona() -> str:
             "\n\n--- AUTO-LOADED SLANG BANK (use these words naturally in replies) ---\n"
             + sb.read_text(encoding="utf-8")
         )
+    # Auto-load verified facts (sources of truth for current affairs; > training memory).
+    fb = base / "FACTS.md"
+    if fb.exists():
+        persona += (
+            "\n\n--- VERIFIED FACTS (trust this OVER your training memory) ---\n"
+            + fb.read_text(encoding="utf-8")
+        )
     return persona
 
 
