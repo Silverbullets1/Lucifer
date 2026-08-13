@@ -56,33 +56,29 @@ async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
     raise last_err or RuntimeError("edge_tts failed")
 
 
-def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
-    """Offline fallback only — Hindi voice, never English."""
-    from indic_transliteration.sanscript import transliterate, OPTITRANS, DEVANAGARI
-    import numpy as np
-    pipe = _get_pipe("h")
-    try:
-        synth_text = transliterate(text, OPTITRANS, DEVANAGARI)
-    except Exception:
-        synth_text = text
-    wavs = [audio for _, _, audio in pipe(synth_text, voice=settings.tts_voice_hi, speed=1.0) if audio is not None]
-    if not wavs:
-        return b""
-    audio = np.concatenate(wavs) if len(wavs) > 1 else wavs[0]
-    if hasattr(audio, "cpu"):
-        audio = audio.cpu().numpy()
-    return _to_wav_bytes(audio, sample_rate=24000)
+def _gtts_hindi_fallback(text: str) -> bytes:
+    """Free Google TTS Hindi — natural, better than Kokoro robotic fallback."""
+    from gtts import gTTS
+    import io
+    buf = io.BytesIO()
+    gTTS(text=text, lang="hi", slow=False).write_to_fp(buf)
+    return buf.getvalue()
 
 
 async def synthesize(text: str, settings: Settings) -> bytes:
-    """ALL replies spoken by Arjun (hi-IN). No English/USA voice, ever."""
+    """ALL replies spoken by Arjun (hi-IN). No English/USA voice, ever.
+    Fallback chain: Edge Arjun -> gTTS Hindi (natural) -> Kokoro Hindi (offline)."""
     if not text.strip():
         return b""
     try:
         return await _edge_tts(text, EDGE_HI_VOICE)
     except Exception as e:
-        log.warning("Edge TTS failed (%s); falling back to Kokoro Hindi", e)
-        return await asyncio.to_thread(_kokoro_hindi_fallback, text, settings)
+        log.warning("Edge TTS failed (%s); trying gTTS Hindi", e)
+        try:
+            return await asyncio.to_thread(_gtts_hindi_fallback, text)
+        except Exception as e2:
+            log.warning("gTTS failed (%s); falling back to Kokoro Hindi", e2)
+            return await asyncio.to_thread(_kokoro_hindi_fallback, text, settings)
 
 
 def _to_wav_bytes(audio_float, sample_rate: int) -> bytes:
