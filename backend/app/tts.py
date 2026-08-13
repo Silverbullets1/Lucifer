@@ -19,6 +19,14 @@ log = logging.getLogger("lucifer.tts")
 # Devanagari range = Hindi written in देवनागरी
 _DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
+# URLs / links — Edge reads these as awkward letter soup ("h t t p...").
+# We strip them from the SPOKEN text only (the on-screen reply keeps them).
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+
+
+def _strip_urls(text: str) -> str:
+    return _URL_RE.sub(" लिंक ", text)
+
 # Microsoft Edge TTS voice for Hindi (free, no API key)
 EDGE_HI_VOICE = "hi-IN-SwaraNeural"  # Indian female (Devil's Queen), pure Hindi
 
@@ -107,6 +115,7 @@ async def synthesize(text: str, settings: Settings, emotion: str = "neutral") ->
     if not text.strip():
         return b""
     clean = re.sub(r"<EMOTION:[a-z]+>\s*$", "", text.strip())
+    clean = _strip_urls(clean)   # don't speak "h t t p..."
     try:
         return await _edge_tts_ssml(clean, EDGE_HI_VOICE, emotion=emotion)
     except Exception as e:
