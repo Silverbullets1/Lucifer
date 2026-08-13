@@ -2,5 +2,8 @@
   "version": 2,
   "buildCommand": null,
   "outputDirectory": ".",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://gone-verification-cinema-citizen.trycloudflare.com/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }

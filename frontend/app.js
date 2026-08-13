@@ -1,10 +1,9 @@
 // LUCIFER — Frontend logic
-// Talks to backend (Cloudflare tunnel) at API_BASE.
+// Talks to backend via Vercel rewrite (/api/* -> backend). Same-origin, no CORS/mixed-content.
 // Mic uses browser Web Speech API (Hindi + English). Text fallback always works.
 
-// ===== CONFIG: set your backend tunnel URL here =====
-const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";
-// ====================================================
+// ===== CONFIG: backend reached via same-origin /api/* (Vercel proxies to backend) =====
+const API_BASE = "";   // fetch("/api/voice") -> Vercel rewrite -> backend
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");

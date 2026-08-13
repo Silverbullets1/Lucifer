@@ -28,7 +28,7 @@ class Settings(BaseModel):
     brain_api_key: str = Field(default=os.getenv("LUCIFER_BRAIN_KEY", ""))
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
-    stt_model: str = Field(default=os.getenv("STT_MODEL", "base"))    # tiny|base|small
+    stt_model: str = Field(default=os.getenv("STT_MODEL", "small"))    # tiny|base|small|medium
     # TTS VOICE POLICY (per SAM): ONLY Hindi/Hinglish.
     # Primary: Sarvam Bulbul V3 — Kabir (Indian MALE, native Hinglish code-switching).
     # Fallback: Edge TTS Prabhat (Indian MALE, Hinglish) if Sarvam fails.
