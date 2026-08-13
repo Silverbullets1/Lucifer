@@ -19,8 +19,8 @@ log = logging.getLogger("lucifer.tts")
 # Devanagari range = Hindi written in देवनागरी
 _DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
-# Microsoft Edge TTS voice for Hindi/Hinglish (free, no API key)
-EDGE_HI_VOICE = "hi-IN-ArjunNeural"
+# Microsoft Edge TTS voice for Hindi (free, no API key)
+EDGE_HI_VOICE = "hi-IN-SwaraNeural"  # Indian female (Devil's Queen), pure Hindi
 
 _PIPES = {}  # lang_code -> KPipeline (lazy, fallback only)
 

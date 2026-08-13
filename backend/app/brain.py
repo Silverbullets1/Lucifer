@@ -62,7 +62,8 @@ async def reply(user_text: str, history=None) -> str:
             headers={"Authorization": f"Bearer {api_key}",
                      "Content-Type": "application/json"},
             json={"model": Settings().model, "messages": messages,
-                  "max_tokens": 700, "temperature": 0.8},
+                  "max_tokens": 700, "temperature": 0.8,
+                  "reasoning_effort": "low"},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -84,7 +85,8 @@ async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
             headers={"Authorization": f"Bearer {api_key}",
                      "Content-Type": "application/json"},
             json={"model": Settings().model, "messages": messages,
-                  "max_tokens": 700, "temperature": 0.8, "stream": True},
+                  "max_tokens": 700, "temperature": 0.8, "stream": True,
+                  "reasoning_effort": "low"},
         ) as resp:
             resp.raise_for_status()
             # SSE parse: lines "data: {...}" ; reasoning then content chunks.
