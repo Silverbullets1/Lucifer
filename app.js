@@ -99,35 +99,119 @@ async function speak(text) {
   }
 }
 
-// ---------- voice input (Web Speech API) ----------
+// ---------- voice input (Web Speech primary + whisper fallback) ----------
+let wsGotResult = false;      // Web Speech delivered a final result?
+let wsTimer = null;           // 3s timeout -> whisper
+let silenceTimer = null;      // 3s silence -> auto reply (whisper path)
+let lastSpeechTs = 0;
+
 function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return false;
   recog = new SR();
-  recog.lang = "hi-IN"; // handles Hinglish; English words pass through
-  recog.interimResults = false;
+  recog.lang = "hi-IN";
+  recog.interimResults = true;
   recog.continuous = false;
   recog.onresult = (e) => {
-    const txt = e.results[0][0].transcript.trim();
-    if (txt) askLucifer(txt);
+    let txt = "";
+    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    txt = txt.trim();
+    if (txt) {
+      wsGotResult = true;
+      if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+      // show interim
+      let p = transcript.querySelector(".you.interim");
+      if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
+      p.textContent = "🧑 " + txt;
+      transcript.scrollTop = transcript.scrollHeight;
+      if (e.results[0].isFinal) {
+        p.remove();
+        stopListen();
+        askLucifer(txt);
+      }
+    }
   };
-  recog.onerror = () => stopListen();
-  recog.onend = () => { if (listening) stopListen(); };
+  recog.onerror = (ev) => {
+    const msg = ev && ev.error ? ev.error : "err";
+    if (msg === "not-allowed") { if (hint) hint.textContent = "❌ Mic blocked. Allow & retry, or TYPE."; stopListen(); return; }
+    if (msg !== "no-speech" && msg !== "aborted") startBackendSTT(); // real error -> whisper
+  };
+  recog.onend = () => {
+    // Web Speech ended without final result within window -> whisper takes over
+    if (listening && !busy && !wsGotResult) startBackendSTT();
+    else if (listening) stopListen();
+  };
   return true;
 }
 
+// Whisper fallback: record mic -> backend /voice (verified working)
+let mediaRecorder = null, micStream = null;
+async function startBackendSTT() {
+  if (busy || !listening) return;
+  if (hint) hint.textContent = "🎙️ Recording… bol bc (3s silence = auto send)";
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    if (hint) hint.textContent = "❌ Mic denied. Use TYPE.";
+    listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold");
+    return;
+  }
+  mediaRecorder = new MediaRecorder(micStream);
+  const chunks = [];
+  mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+    if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    if (!blob.size) { resetMic(); return; }
+    busy = true; setStatus("busy"); orb.classList.add("speaking");
+    if (hint) hint.textContent = "🧠 Soch raha hoon…";
+    try {
+      const fd = new FormData(); fd.append("audio", blob, "speech.webm");
+      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      const d = await r.json();
+      if (d.text && d.text.trim()) {
+        addLine("you", d.text);
+        if (d.reply) { addLine("lu", d.reply); await speak(d.reply); }
+      } else if (hint) hint.textContent = "🎤 Kuch sunai nhi — dobara bol bc.";
+    } catch (e) { if (hint) hint.textContent = "⚠️ Voice fail: " + e.message; }
+    finally { busy = false; setStatus("on"); orb.classList.remove("speaking"); resetMic(); }
+  };
+  mediaRecorder.start();
+  // 3s silence -> auto stop & send
+  lastSpeechTs = Date.now();
+  const watch = setInterval(() => {
+    if (!mediaRecorder || mediaRecorder.state !== "recording") { clearInterval(watch); return; }
+    const since = Date.now() - lastSpeechTs;
+    if (since >= 3000) { clearInterval(watch); mediaRecorder.stop(); }
+  }, 300);
+}
+function resetMic() {
+  listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold");
+  if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+  if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+}
+
 function startListen() {
-  if (!recog || busy) return;
-  listening = true;
-  orb.classList.add("listening");
-  micBtn.classList.add("hold");
-  try { recog.start(); } catch (_) {}
+  if (busy || listening) return;
+  listening = true; wsGotResult = false;
+  orb.classList.add("listening"); micBtn.classList.add("hold");
+  if (hint) hint.textContent = "🎙️ Sun raha hoon… bol bc";
+  if (recog) {
+    try { recog.start(); } catch (_) {}
+    // 3s me Web Speech result na aaye -> whisper
+    wsTimer = setTimeout(() => { if (listening && !wsGotResult && !busy) startBackendSTT(); }, 3000);
+  } else {
+    startBackendSTT();
+  }
 }
 function stopListen() {
   listening = false;
-  orb.classList.remove("listening");
-  micBtn.classList.remove("hold");
+  orb.classList.remove("listening"); micBtn.classList.remove("hold");
+  if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
+  if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
   try { recog && recog.stop(); } catch (_) {}
+  if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
 }
 
 // ---------- events ----------
