@@ -21,9 +21,9 @@ class Settings(BaseModel):
     tts_voice_hi: str = Field(default=os.getenv("TTS_VOICE_HI", "hm_psi"))
     tts_voice_en: str = Field(default=os.getenv("TTS_VOICE_EN", "am_michael"))
     tts_voice: str = Field(default=os.getenv("TTS_VOICE", "am_michael"))  # fallback
-    # CORS (allow Flutter dev + local clients)
+    # CORS (allow Flutter dev + Vercel frontend + local clients)
     cors_origins: list[str] = Field(default_factory=lambda: [
-        o for o in (os.getenv("CORS_ORIGINS") or "http://localhost,http://127.0.0.1").split(",") if o
+        o for o in (os.getenv("CORS_ORIGINS") or "*").split(",") if o
     ])
     # How many recent turns to keep in working memory per session
     memory_turns: int = Field(default=int(os.getenv("MEMORY_TURNS", "12")))
