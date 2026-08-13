@@ -29,13 +29,12 @@ log = logging.getLogger("lucifer")
 
 import re as _re
 
-# Reply sanitizer: strip emoji (TTS can't speak them) + hard-banned tokens.
+# Reply sanitizer: strip emoji (TTS can't speak them) — persona also forbids
+# emoji/markdown, this is a safety net so nothing slips through to speech.
 _EMOJI_RE = _re.compile(
     "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF"
     "\U00002190-\U000021FF\U00002B00-\U00002BFF\U0000FE00-\U0000FE0F"
     "\U0000200D\U00002702-\U000027B0]+", flags=_re.UNICODE)
-# Hard-banned leftovers the model may hallucinate (not persona-specific):
-_BANNED = _re.compile(r"\b(muskan|whisky|whiskey)\b", _re.IGNORECASE)
 
 # --- HINGLISH WORD-SPLITTER -------------------------------------------------
 # upstage free model often GLUES Roman-Hindi words together (hellojaan,
@@ -101,8 +100,7 @@ def _fix_hinglish_spacing(text: str) -> str:
 def sanitize_reply(text: str) -> str:
     if not text:
         return text
-    text = _EMOJI_RE.sub("", text)              # remove all emoji
-    text = _BANNED.sub("", text)                 # remove hard-banned tokens
+    text = _EMOJI_RE.sub("", text)              # remove all emoji (TTS safety net)
     text = _fix_hinglish_spacing(text)          # split glued words (hellojaan)
     # ensure a space after punctuation when followed by a letter
     text = _re.sub(r"([,?!;:])([A-Za-z])", r"\1 \2", text)
