@@ -107,7 +107,7 @@ function setupSpeech() {
       if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
       p.textContent = "🧑 " + txt;
       transcript.scrollTop = transcript.scrollHeight;
-      if (e.results[0].isFinal) { p.remove(); askLucifer(txt); stopListen(); }
+      if (e.results[0].isFinal) { recog._gotFinal = true; p.remove(); askLucifer(txt); stopListen(); }
     }
   };
   recog.onerror = (ev) => {
@@ -115,11 +115,15 @@ function setupSpeech() {
     if (msg === "not-allowed" || msg === "service-not-allowed") {
       if (hint) hint.textContent = "❌ Mic blocked. Allow mic & retry, or TYPE.";
     } else if (msg !== "no-speech" && msg !== "aborted") {
-      startBackendSTT(); // fallback to whisper
+      startBackendSTT(); // fallback to whisper on any real error
     }
     stopListen();
   };
-  recog.onend = () => { if (listening && !busy) stopListen(); };
+  recog.onend = () => {
+    // Web Speech ended without delivering a final result (common on mobile) → whisper
+    if (listening && !busy && !recog._gotFinal) startBackendSTT();
+    else if (listening) stopListen();
+  };
   return true;
 }
 
@@ -129,10 +133,12 @@ async function startListen() {
   orb.classList.add("listening");
   micBtn.classList.add("hold");
   hint.textContent = "🎙️ Sun raha hoon… bol bc (8s auto-stop)";
+  // Try Web Speech first (fast on Chrome). If it errors or ends with no result,
+  // the onerror/onend handlers below fall back to backend whisper.
   if (recog) {
     try { recog.start(); return; } catch (_) {}
   }
-  startBackendSTT(); // no Web Speech → whisper
+  startBackendSTT();
 }
 
 // Whisper fallback (Firefox/Safari where Web Speech unsupported) — uses real mimeType

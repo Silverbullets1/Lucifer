@@ -107,7 +107,7 @@ function setupSpeech() {
       if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
       p.textContent = "🧑 " + txt;
       transcript.scrollTop = transcript.scrollHeight;
-      if (e.results[0].isFinal) { p.remove(); askLucifer(txt); stopListen(); }
+      if (e.results[0].isFinal) { recog._gotFinal = true; p.remove(); askLucifer(txt); stopListen(); }
     }
   };
   recog.onerror = (ev) => {
@@ -120,7 +120,10 @@ function setupSpeech() {
     }
     stopListen();
   };
-  recog.onend = () => { if (listening) stopListen(); };
+  recog.onend = () => {
+    if (listening && !busy && !recog._gotFinal) startBackendSTT();
+    else if (listening) stopListen();
+  };
   return true;
 }
 
