@@ -15,7 +15,12 @@ class Settings(BaseModel):
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
     stt_model: str = Field(default=os.getenv("STT_MODEL", "base"))    # tiny|base|small
-    tts_voice: str = Field(default=os.getenv("TTS_VOICE", "af_heart"))  # Kokoro voice id
+    # TTS = Kokoro, multilingual male voices for Lucifer.
+    # Hindi/Hinglish (Devanagari detected) -> hm_psi (natural human male, SAM's pick)
+    # English -> am_michael (warm, deep, trustworthy male)
+    tts_voice_hi: str = Field(default=os.getenv("TTS_VOICE_HI", "hm_psi"))
+    tts_voice_en: str = Field(default=os.getenv("TTS_VOICE_EN", "am_michael"))
+    tts_voice: str = Field(default=os.getenv("TTS_VOICE", "am_michael"))  # fallback
     # CORS (allow Flutter dev + local clients)
     cors_origins: list[str] = Field(default_factory=lambda: [
         o for o in (os.getenv("CORS_ORIGINS") or "http://localhost,http://127.0.0.1").split(",") if o
