@@ -135,6 +135,40 @@ async function startListen() {
   startBackendSTT(); // no Web Speech → whisper
 }
 
+// Whisper fallback (Firefox/Safari where Web Speech unsupported) — uses real mimeType
+async function startBackendSTT() {
+  if (busy || listening) return;
+  listening = true; orb.classList.add("listening"); micBtn.classList.add("hold");
+  hint.textContent = "🎙️ Recording… (whisper) bol bc";
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { listening = false; orb.classList.remove("listening"); micBtn.classList.remove("hold"); if (hint) hint.textContent = "❌ Mic denied. Use TYPE."; return; }
+  let mr;
+  try { mr = new MediaRecorder(stream); } catch (e) { stream.getTracks().forEach(t=>t.stop()); if (hint) hint.textContent = "❌ MediaRecorder unsupported."; resetMic(); return; }
+  mediaRecorder = mr; micStream = stream;
+  const chunks = [];
+  mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mr.onstop = async () => {
+    if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
+    const mime = mr.mimeType || "audio/webm";
+    const blob = new Blob(chunks, { type: mime });
+    if (!blob.size) { resetMic(); return; }
+    busy = true; setStatus("busy"); orb.classList.add("speaking");
+    hint.textContent = "🧠 Soch raha hoon…";
+    try {
+      const fd = new FormData(); fd.append("audio", blob, "speech");
+      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      if (!r.ok) throw new Error("voice failed " + r.status);
+      const d = await r.json();
+      if (d.text && d.text.trim()) { addLine("you", d.text); addLine("lu", d.reply || ""); await speak(d.reply || ""); }
+      else if (hint) hint.textContent = "🎤 Kuch sunai nhi — dobara bol bc.";
+    } catch (e) { addLine("err", "⚠️ Voice process fail: " + e.message); }
+    finally { busy = false; setStatus("on"); orb.classList.remove("speaking"); resetMic(); }
+  };
+  mr.start();
+  recTimer = setTimeout(() => { if (mr.state === "recording") mr.stop(); }, 8000);
+}
+
 function stopListen() {
   if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
   if (recTimer) { clearTimeout(recTimer); recTimer = null; }

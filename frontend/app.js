@@ -142,7 +142,7 @@ async function startBackendSTT() {
   mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   mediaRecorder.onstop = async () => {
     if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
-    const blob = new Blob(chunks, { type: "audio/webm" });
+    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
     if (!blob.size) { resetMic(); return; }
     busy = true; setStatus("busy"); orb.classList.add("speaking");
     if (hint) hint.textContent = "🧠 Soch raha hoon…";
