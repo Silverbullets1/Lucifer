@@ -29,17 +29,8 @@ log = logging.getLogger("lucifer")
 
 import re as _re
 
-# Trailing <EMOTION:..> tag the LLM appends so the voice can be shaped.
-_EMOTION_TAG = _re.compile(r"\s*<EMOTION:([a-z]+)>\s*$", _re.IGNORECASE)
-
-
-def _split_emotion(text: str):
-    """Return (clean_text, emotion) by extracting a trailing <EMOTION:..> tag."""
-    m = _EMOTION_TAG.search(text or "")
-    if m:
-        return text[:m.start()].strip(), m.group(1).lower()
-    return (text or "").strip(), "neutral"
-
+# _split_emotion() lives in tts.py (also strips URLs + parses the emotion tag).
+from .tts import _split_emotion
 
 # --- Reply sanitizer: strip emoji (TTS can't speak them) + any leftover
 # problematic tokens (Muskan / whisky) the model may hallucinate.
