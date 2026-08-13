@@ -3,7 +3,7 @@
 // Mic uses browser Web Speech API (Hindi + English). Text fallback always works.
 
 // ===== CONFIG: backend via Cloudflare tunnel (stable, working) =====
-const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";   // <-- your tunnel URL
+const API_BASE = "https://wonder-mental-being-doors.trycloudflare.com";   // <-- your tunnel URL
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
