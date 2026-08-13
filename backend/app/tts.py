@@ -21,9 +21,14 @@ from .config import Settings
 
 log = logging.getLogger("lucifer.tts")
 
-# Microsoft Edge TTS voice for Hinglish (free, no API key)
+# Microsoft Edge TTS voice for Hinglish (fallback, free, no API key)
 # en-IN-PrabhatNeural = Indian MALE, natural Hinglish (Roman) accent — no USA accent
 EDGE_HI_VOICE = "en-IN-PrabhatNeural"
+
+# Sarvam Bulbul V3 (primary) — Kabir = Indian MALE, native Hinglish code-switching.
+# Api key + speaker come from Settings (env). Hinglish mixing is far more natural
+# here than on Edge, so this is the primary voice per SAM's choice.
+SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
 
 # URLs / links — Edge reads these as awkward letter soup ("h t t p ...").
 # We strip them from the SPOKEN text only (the on-screen reply keeps them).
@@ -43,7 +48,7 @@ async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
 
     # Native prosody params (edge_tts supports rate/volume/pitch directly —
     # wrapping in SSML made Edge read the tags aloud as text, a bug).
-    # rate="fast" + louder + higher pitch = punchy Devil vibe.
+    # rate="+15%" + louder + lower pitch = punchy male Devil vibe.
     last_err = None
     for attempt in range(1, retries + 1):
         try:
@@ -66,6 +71,43 @@ async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
             last_err = e
             log.warning("Edge TTS attempt %d/%d failed: %s", attempt, retries, e)
     raise last_err or RuntimeError("edge_tts failed")
+
+
+def _sarvam_tts(text: str, settings: Settings) -> bytes:
+    """Sarvam Bulbul V3 — Kabir (Indian MALE, native Hinglish code-switching).
+
+    Sarvam returns base64-encoded audio inside a JSON `audios` array, so we
+    must decode it (saving the raw response directly yields a non-playable
+    JSON file, not mp3). hi-IN target language gives natural Hinglish mixing.
+    """
+    import base64
+    import requests
+
+    if not settings.sarvam_api_key:
+        raise RuntimeError("SARVAM_API_KEY not set")
+
+    resp = requests.post(
+        SARVAM_TTS_URL,
+        headers={
+            "api-subscription-key": settings.sarvam_api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "text": text,
+            "target_language_code": "hi-IN",
+            "speaker": settings.sarvam_speaker,
+            "model": "bulbul:v3",
+            "output_audio_codec": "mp3",
+        },
+        timeout=60,
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Sarvam API error {resp.status_code}: {resp.text[:200]}")
+    payload = resp.json()
+    audios = payload.get("audios") or []
+    if not audios:
+        raise RuntimeError("Sarvam returned no audio")
+    return base64.b64decode(audios[0])
 
 
 def _gtts_hindi_fallback(text: str) -> bytes:
@@ -102,9 +144,10 @@ def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
 
 
 async def synthesize(text: str, settings: Settings) -> bytes:
-    """Speak text with Swara (hi-IN) — plain natural Hindi, no emotion shaping.
+    """Speak text with Kabir (Sarvam Bulbul V3) — Indian MALE, native Hinglish.
 
-    Fallback chain: Edge Swara (natural)
+    Fallback chain: Sarvam Kabir (natural Hinglish, PRIMARY)
+                    -> Edge Prabhat (Indian male Hinglish, if Sarvam fails)
                     -> gTTS Hindi (natural)
                     -> Kokoro Hindi (offline, last resort).
     """
@@ -114,12 +157,19 @@ async def synthesize(text: str, settings: Settings) -> bytes:
     # If the cleaned text became empty (e.g. only a URL), say a gentle filler.
     if not clean.strip():
         clean = "लिंक मिला"
+    # Primary: Sarvam Bulbul V3 (Kabir) — best Hinglish male voice
     try:
-        return await _edge_tts(clean, EDGE_HI_VOICE)
+        return await asyncio.to_thread(_sarvam_tts, clean, settings)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Sarvam TTS failed (%s); trying Edge Prabhat", e)
+    # Fallback 1: Edge Prabhat (Indian male Hinglish)
+    try:
+        return await _edge_tts(clean, settings.edge_hi_voice)
     except Exception as e:  # noqa: BLE001
         log.warning("Edge TTS failed (%s); trying gTTS Hindi", e)
-        try:
-            return await asyncio.to_thread(_gtts_hindi_fallback, clean)
-        except Exception as e2:  # noqa: BLE001
-            log.warning("gTTS failed (%s); falling back to Kokoro Hindi", e2)
-            return await asyncio.to_thread(_kokoro_hindi_fallback, clean, settings)
+    # Fallback 2: gTTS Hindi
+    try:
+        return await asyncio.to_thread(_gtts_hindi_fallback, clean)
+    except Exception as e2:  # noqa: BLE001
+        log.warning("gTTS failed (%s); falling back to Kokoro Hindi", e2)
+        return await asyncio.to_thread(_kokoro_hindi_fallback, clean, settings)
