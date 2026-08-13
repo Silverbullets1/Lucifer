@@ -84,7 +84,7 @@ async function askLucifer(text) {
 
 async function speak(text) {
   try {
-    const r = await fetch(API_BASE + "/voice", {
+    const r = await fetch(API_BASE + "/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),

@@ -115,6 +115,17 @@ async def voice(audio: UploadFile = File(...)):
     return {"text": text, "reply": reply, "audio_b64": base64.b64encode(wav_bytes).decode()}
 
 
+@app.post("/tts")
+async def tts(req: ChatReq):
+    """Text-in -> TTS audio (wav bytes). Used by the web frontend to speak replies."""
+    try:
+        wav_bytes = synthesize(req.text, settings)
+    except Exception as e:
+        log.exception("tts failed")
+        raise HTTPException(500, f"tts: {e}")
+    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
+
+
 @app.websocket("/ws")
 async def ws(ws: WebSocket):
     """Streaming voice loop: client sends audio chunks, server replies audio."""
