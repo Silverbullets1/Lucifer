@@ -256,6 +256,30 @@ async def ws(ws: WebSocket):
         log.exception("ws error")
 
 
+# --- Serve frontend from backend (single origin = mic + CORS both work) ---
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+if not _FRONTEND_DIR.exists():
+    _FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent  # fallback: repo root
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+@app.get("/app")
+async def frontend_app():
+    # prefer /frontend dir, else repo root
+    for d in (_FRONTEND_DIR, Path(__file__).resolve().parent.parent.parent):
+        idx = d / "index.html"
+        if idx.exists():
+            return FileResponse(idx)
+    return HTMLResponse("<h1>Lucifer frontend missing</h1>")
+
+@app.get("/app.js")
+async def frontend_js():
+    for d in (_FRONTEND_DIR, Path(__file__).resolve().parent.parent.parent):
+        js = d / "app.js"
+        if js.exists():
+            return FileResponse(js, media_type="application/javascript")
+    return HTMLResponse("not found", status_code=404)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host=settings.host, port=settings.port, reload=False)
