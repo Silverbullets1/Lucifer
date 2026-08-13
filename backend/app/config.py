@@ -7,9 +7,11 @@ from pydantic import BaseModel, Field
 class Settings(BaseModel):
     host: str = Field(default=os.getenv("LUCIFER_HOST", "0.0.0.0"))
     port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8723")))
-    # Ollama (the BRAIN). Default to the uncensored qwen3 build SAM already has.
-    ollama_base: str = Field(default=os.getenv("OLLAMA_BASE", "http://localhost:11434"))
-    ollama_model: str = Field(default=os.getenv("OLLAMA_MODEL", "richardyoung/qwen3-4b-instruct-2507-abliterated:latest"))
+    # BRAIN = tencent/hy3:free via Nous Portal (no Ollama). Free, reasoning model.
+    model: str = Field(default=os.getenv("LUCIFER_MODEL", "tencent/hy3:free"))
+    # Optional override if you ever self-host a different OpenAI-compatible brain.
+    brain_base_url: str = Field(default=os.getenv("LUCIFER_BRAIN_BASE", ""))
+    brain_api_key: str = Field(default=os.getenv("LUCIFER_BRAIN_KEY", ""))
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
     stt_model: str = Field(default=os.getenv("STT_MODEL", "base"))    # tiny|base|small

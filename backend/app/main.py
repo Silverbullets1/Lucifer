@@ -2,48 +2,42 @@
 LUCIFER — Voice Assistant Backend
 FastAPI server that wires the 3-layer voice pipeline:
   Mic audio (from Flutter app) -> STT (faster-whisper)
-                          -> LLM (Ollama + Lucifer persona)
+                          -> LLM (tencent/hy3:free via Nous, + Lucifer persona)
                           -> TTS (Kokoro) -> audio back to app
 Cross-platform: same backend serves Windows + Android Flutter clients.
+
+BRAIN = tencent/hy3:free (Nous Portal). No Ollama. Free, reasoning model.
 """
 from __future__ import annotations
-import os, io, logging, asyncio, tempfile
+import os, io, logging, asyncio, tempfile, base64
 from pathlib import Path
 from typing import AsyncGenerator
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
-from .config import Settings
-from .brain import LuciferBrain
+from .config import settings
+from .brain import reply as brain_reply, stream_reply as brain_stream
 from .stt import transcribe
 from .tts import synthesize
 
-settings = Settings()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("lucifer")
 
-app = FastAPI(title="Lucifer Voice Assistant", version="0.1.0")
+app = FastAPI(title="Lucifer Voice Assistant", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_methods=["*"], allow_headers=["*"],
 )
 
-# Lazily-built singletons
-_brain: LuciferBrain | None = None
-def brain() -> LuciferBrain:
-    global _brain
-    if _brain is None:
-        _brain = LuciferBrain(settings)
-    return _brain
-
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": settings.ollama_model, "device": settings.device}
+    return {"status": "ok", "model": settings.model, "device": settings.device}
 
 
 class ChatReq(BaseModel):
@@ -55,11 +49,24 @@ class ChatReq(BaseModel):
 async def chat(req: ChatReq):
     """Text-in -> text-out (used for quick testing / non-voice mode)."""
     try:
-        reply = await brain().reply(req.text, req.history or [])
+        reply = await brain_reply(req.text, req.history or [])
     except Exception as e:
         log.exception("chat failed")
         raise HTTPException(500, str(e))
     return {"reply": reply}
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatReq):
+    """Stream the Lucifer reply token-by-token (premium low-latency feel)."""
+    async def gen():
+        try:
+            async for tok in brain_stream(req.text, req.history or []):
+                yield tok
+        except Exception as e:
+            log.exception("stream failed")
+            yield f"[error: {e}]"
+    return StreamingResponse(gen(), media_type="text/plain")
 
 
 @app.post("/voice")
@@ -79,7 +86,7 @@ async def voice(audio: UploadFile = File(...)):
         return {"text": "", "reply": "", "audio_b64": ""}
     # 2) LLM
     try:
-        reply = await brain().reply(text)
+        reply = await brain_reply(text)
     except Exception as e:
         log.exception("llm failed")
         raise HTTPException(500, f"llm: {e}")
@@ -89,9 +96,7 @@ async def voice(audio: UploadFile = File(...)):
         wav_bytes = synthesize(reply, settings)
     except Exception as e:
         log.exception("tts failed")
-        # still return text if tts fails
         return {"text": text, "reply": reply, "audio_b64": ""}
-    import base64
     return {"text": text, "reply": reply, "audio_b64": base64.b64encode(wav_bytes).decode()}
 
 
@@ -113,7 +118,7 @@ async def ws(ws: WebSocket):
             await ws.send_json({"type": "stt", "text": text})
             if not text.strip():
                 continue
-            reply = await brain().reply(text)
+            reply = await brain_reply(text)
             await ws.send_json({"type": "llm", "text": reply})
             wav = synthesize(reply, settings)
             await ws.send_bytes(wav)
