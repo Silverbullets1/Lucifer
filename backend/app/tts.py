@@ -22,8 +22,8 @@ from .config import Settings
 log = logging.getLogger("lucifer.tts")
 
 # Microsoft Edge TTS voice for Hinglish (free, no API key)
-# en-IN-NeerjaNeural = Indian female, natural Hinglish (Roman) accent — no USA accent
-EDGE_HI_VOICE = "en-IN-NeerjaNeural"
+# en-IN-PrabhatNeural = Indian MALE, natural Hinglish (Roman) accent — no USA accent
+EDGE_HI_VOICE = "en-IN-PrabhatNeural"
 
 # URLs / links — Edge reads these as awkward letter soup ("h t t p ...").
 # We strip them from the SPOKEN text only (the on-screen reply keeps them).
