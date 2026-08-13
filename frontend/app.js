@@ -1,33 +1,27 @@
-// LUCIFER — Frontend logic
-// Talks to backend (Cloudflare tunnel) at API_BASE.
+// LUCIFER — Frontend logic (Vercel-hosted version, talks to Cloudflare tunnel backend)
 // Mic uses browser Web Speech API (Hindi + English). Text fallback always works.
 
-// ===== CONFIG: set your backend tunnel URL here =====
+// ===== CONFIG: backend tunnel URL =====
 const API_BASE = "https://gone-verification-cinema-citizen.trycloudflare.com";
-// ====================================================
+// ======================================
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
 const micBtn = $("micBtn"), textBtn = $("textBtn");
 const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn");
 const transcript = $("transcript"), hint = $("hint");
-const dot = $("dot"), statusText = $("statusText");
+const dot = $("statusDot") || $("dot"), statusText = $("statusText");
 
 let audioEl = new Audio();
 let recog = null, listening = false, busy = false;
 
-// ---------- status ----------
 function setStatus(state) {
-  dot.className = "dot" + (state === "on" ? " on" : state === "busy" ? " busy" : "");
-  statusText.textContent = state === "on" ? "online" : state === "busy" ? "thinking…" : "offline";
+  if (dot) dot.className = "dot" + (state === "on" ? " on" : state === "busy" ? " busy" : "");
+  if (statusText) statusText.textContent = state === "on" ? "online" : state === "busy" ? "thinking…" : "offline";
 }
 
-// ---------- waveform ----------
 const cv = $("wave"), cx = cv.getContext("2d");
-function sizeCanvas() {
-  cv.width = cv.clientWidth * devicePixelRatio;
-  cv.height = cv.clientHeight * devicePixelRatio;
-}
+function sizeCanvas() { cv.width = cv.clientWidth * devicePixelRatio; cv.height = cv.clientHeight * devicePixelRatio; }
 window.addEventListener("resize", sizeCanvas); sizeCanvas();
 let phase = 0;
 function drawWave(active) {
@@ -49,17 +43,15 @@ function drawWave(active) {
 }
 drawWave(false);
 
-// ---------- transcript ----------
 function addLine(who, text) {
-  if (hint) { hint.remove(); }
+  if (hint) hint.remove();
   const p = document.createElement("p");
-  p.className = who === "you" ? "you" : "lu";
-  p.textContent = (who === "you" ? "🧑 " : "😈 ") + text;
+  p.className = who === "you" ? "you" : who === "err" ? "err" : "lu";
+  p.textContent = (who === "you" ? "🧑 " : who === "err" ? "⚠️ " : "😈 ") + text;
   transcript.appendChild(p);
   transcript.scrollTop = transcript.scrollHeight;
 }
 
-// ---------- backend calls ----------
 async function askLucifer(text) {
   if (!text || busy) return;
   busy = true; setStatus("busy"); orb.classList.add("speaking");
@@ -73,7 +65,6 @@ async function askLucifer(text) {
     if (!r.ok) throw new Error("chat failed");
     const reply = await r.text();
     addLine("lu", reply.trim());
-    // speak
     await speak(reply.trim());
   } catch (e) {
     addLine("err", "Connection error — backend down?");
@@ -104,23 +95,41 @@ function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return false;
   recog = new SR();
-  recog.lang = "hi-IN"; // handles Hinglish; English words pass through
-  recog.interimResults = false;
+  recog.lang = "hi-IN";
+  recog.interimResults = true;
   recog.continuous = false;
   recog.onresult = (e) => {
-    const txt = e.results[0][0].transcript.trim();
-    if (txt) askLucifer(txt);
+    let txt = "";
+    for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    txt = txt.trim();
+    if (txt) {
+      let p = transcript.querySelector(".you.interim");
+      if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
+      p.textContent = "🧑 " + txt;
+      transcript.scrollTop = transcript.scrollHeight;
+      if (e.results[0].isFinal) { p.remove(); askLucifer(txt); stopListen(); }
+    }
   };
-  recog.onerror = () => stopListen();
+  recog.onerror = (ev) => {
+    const msg = ev && ev.error ? ev.error : "unknown";
+    console.warn("SpeechRecognition error:", msg);
+    if (msg === "not-allowed" || msg === "service-not-allowed") {
+      if (hint) hint.textContent = "❌ Mic blocked. Allow mic & retry, or TYPE.";
+    } else if (msg !== "no-speech" && msg !== "aborted") {
+      if (hint) hint.textContent = "⚠️ Speech API error: " + msg + " — use TYPE.";
+    }
+    stopListen();
+  };
   recog.onend = () => { if (listening) stopListen(); };
   return true;
 }
 
 function startListen() {
-  if (!recog || busy) return;
+  if (busy) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
+  if (hint) hint.textContent = "🎙️ Sun raha hoon… bol bc";
   try { recog.start(); } catch (_) {}
 }
 function stopListen() {
@@ -130,7 +139,6 @@ function stopListen() {
   try { recog && recog.stop(); } catch (_) {}
 }
 
-// ---------- events ----------
 micBtn.addEventListener("click", () => {
   if (!recog) { alert("Mic speech not supported on this browser — use TYPE."); return; }
   listening ? stopListen() : startListen();
@@ -143,16 +151,10 @@ sendBtn.addEventListener("click", () => {
   const v = textInput.value.trim();
   if (v) { askLucifer(v); textInput.value = ""; }
 });
-textInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") sendBtn.click();
-});
+textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.click(); });
 
-// ---------- boot ----------
 const hasSpeech = setupSpeech();
-if (!hasSpeech) {
-  micBtn.title = "Mic not supported — use TYPE";
-}
-// health check
+if (!hasSpeech && hint) hint.textContent = "Mic not supported — use TYPE.";
 fetch(API_BASE + "/health")
   .then((r) => r.json())
   .then(() => setStatus("on"))
