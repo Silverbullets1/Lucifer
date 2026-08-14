@@ -20,8 +20,8 @@ module.exports = async (req, res) => {
       if (["transfer-encoding","connection","content-encoding","content-length"].includes(lk)) return;
       try { res.setHeader(k, v); } catch (_) {}
     });
-    const text = await up.text();
-    res.end(text);
+    const buf = Buffer.from(await up.arrayBuffer());
+    res.end(buf);
   } catch (e) {
     res.statusCode = 502;
     res.setHeader("content-type", "application/json");
