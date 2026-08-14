@@ -105,6 +105,7 @@ async function speak(text) {
     if (!blob.size) throw new Error("empty audio");
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
+    audioEl.type = "audio/mpeg";
     await audioEl.play();
   } catch (e) {
     console.warn("TTS failed, skipping audio", e);

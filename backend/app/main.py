@@ -235,7 +235,7 @@ async def tts(req: ChatReq):
     except Exception as e:
         log.exception("tts failed")
         raise HTTPException(500, f"tts: {e}")
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
+    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/mpeg")
 
 
 @app.websocket("/ws")
