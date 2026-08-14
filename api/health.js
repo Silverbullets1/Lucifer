@@ -2,7 +2,7 @@ const VPS_BASE = "http://152.67.14.127:8000";
 module.exports = async (req, res) => {
   try {
     const url = new URL(req.url, "http://localhost");
-    const target = VPS_BASE + "health" + url.search;
+    const target = VPS_BASE + "/health" + url.search;
     const headers = {};
     if (req.headers) for (const [k, v] of Object.entries(req.headers)) {
       if (k.toLowerCase() === "host" || k.toLowerCase() === "connection") continue;
