@@ -79,20 +79,56 @@ async function askLucifer(text) {
   }
 }
 
+// unlock audio on first user gesture (mobile autoplay policy)
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try { audioEl.play().then(() => audioEl.pause()).catch(() => {}); } catch (_) {}
+}
+document.addEventListener("pointerdown", unlockAudio, { once: true });
+document.addEventListener("keydown", unlockAudio, { once: true });
+
+// native browser TTS fallback (always works, no backend needed)
+function nativeSpeak(text) {
+  try {
+    if (!("speechSynthesis" in window)) return false;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "hi-IN"; u.rate = 1.0; u.pitch = 0.9;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+    return true;
+  } catch (_) { return false; }
+}
+
 async function speak(text) {
+  // try backend WAV first
   try {
     const r = await fetch(API_BASE + "/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    if (!r.ok) throw new Error("tts failed");
+    if (!r.ok) throw new Error("tts http " + r.status);
     const blob = await r.blob();
+    if (!blob.size) throw new Error("empty audio");
     const url = URL.createObjectURL(blob);
-    audioEl.src = url;
-    await audioEl.play();
+    const a = new Audio();
+    a.src = url;
+    a.preload = "auto";
+    await new Promise((res, rej) => {
+      a.oncanplaythrough = res;
+      a.onerror = () => rej(new Error("decode"));
+      setTimeout(res, 4000);
+    });
+    await a.play();
+    return; // backend audio worked
   } catch (e) {
-    console.warn("TTS failed, skipping audio", e);
+    console.warn("backend TTS failed, using native:", e.message);
+  }
+  // fallback: browser native voice
+  if (!nativeSpeak(text)) {
+    if (hint) hint.textContent = "🔇 Voice playback blocked — text only.";
   }
 }
 
@@ -116,7 +152,6 @@ function setupSpeech() {
     if (txt) {
       wsGotResult = true;
       if (wsTimer) { clearTimeout(wsTimer); wsTimer = null; }
-      // show interim
       let p = transcript.querySelector(".you.interim");
       if (!p) { p = document.createElement("p"); p.className = "you interim"; transcript.appendChild(p); }
       p.textContent = "🧑 " + txt;
@@ -131,17 +166,15 @@ function setupSpeech() {
   recog.onerror = (ev) => {
     const msg = ev && ev.error ? ev.error : "err";
     if (msg === "not-allowed") { if (hint) hint.textContent = "❌ Mic blocked. Allow & retry, or TYPE."; stopListen(); return; }
-    if (msg !== "no-speech" && msg !== "aborted") startBackendSTT(); // real error -> whisper
+    if (msg !== "no-speech" && msg !== "aborted") startBackendSTT();
   };
   recog.onend = () => {
-    // Web Speech ended without final result within window -> whisper takes over
     if (listening && !busy && !wsGotResult) startBackendSTT();
     else if (listening) stopListen();
   };
   return true;
 }
 
-// Whisper fallback: record mic -> backend /voice (verified working)
 let mediaRecorder = null, micStream = null;
 async function startBackendSTT() {
   if (busy || !listening) return;
@@ -175,7 +208,6 @@ async function startBackendSTT() {
     finally { busy = false; setStatus("on"); orb.classList.remove("speaking"); resetMic(); }
   };
   mediaRecorder.start();
-  // 3s silence -> auto stop & send
   lastSpeechTs = Date.now();
   const watch = setInterval(() => {
     if (!mediaRecorder || mediaRecorder.state !== "recording") { clearInterval(watch); return; }
@@ -196,7 +228,6 @@ function startListen() {
   if (hint) hint.textContent = "🎙️ Sun raha hoon… bol bc";
   if (recog) {
     try { recog.start(); } catch (_) {}
-    // 3s me Web Speech result na aaye -> whisper
     wsTimer = setTimeout(() => { if (listening && !wsGotResult && !busy) startBackendSTT(); }, 3000);
   } else {
     startBackendSTT();
