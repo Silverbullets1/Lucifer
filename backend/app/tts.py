@@ -2,10 +2,10 @@
 Text-to-Speech for Lucifer — Voice Assistant backend.
 
 VOICE POLICY (per SAM): ONLY Hindi, spoken by a natural Indian female voice.
-  - Primary: Microsoft Edge TTS 'hi-IN-SwaraNeural' (free, no API key).
-    Plain, natural Hindi speech — the most human-sounding free option.
-  - Fallback 1: gTTS Hindi (Google, free, natural) — if Edge fails.
-  - Fallback 2: Kokoro Hindi (offline) — last resort if both cloud TTS fail.
+  - Primary: Sarvam Bulbul V3 shubh (Indian MALE, default, hi-IN) 'hi-IN-SwaraNeural' (free, no API key).
+    Plain, natural Hindi speech (now used as fallback, not primary).
+  - Fallback 1: Edge TTS Prabhat (if Sarvam fails).
+  - Fallback 2: gTTS Hindi (if Edge fails).
 
 synthesize() is async because the FastAPI event loop is already running,
 so we must `await` edge_tts rather than asyncio.run().
@@ -25,7 +25,7 @@ log = logging.getLogger("lucifer.tts")
 # en-IN-PrabhatNeural = Indian MALE, natural Hinglish (Roman) accent — no USA accent
 EDGE_HI_VOICE = "en-IN-PrabhatNeural"
 
-# Sarvam Bulbul V3 (primary) — Kabir = Indian MALE, native Hinglish code-switching.
+# Sarvam Bulbul V3 (primary) — shubh = Indian MALE (default), native Hinglish code-switching.
 # Api key + speaker come from Settings (env). Hinglish mixing is far more natural
 # here than on Edge, so this is the primary voice per SAM's choice.
 SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
@@ -74,7 +74,7 @@ async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
 
 
 def _sarvam_tts(text: str, settings: Settings) -> bytes:
-    """Sarvam Bulbul V3 — Kabir (Indian MALE, native Hinglish code-switching).
+    """Sarvam Bulbul V3 — shubh (Indian MALE, default, native Hinglish code-switching).
 
     Sarvam returns base64-encoded audio inside a JSON `audios` array, so we
     must decode it (saving the raw response directly yields a non-playable
@@ -147,9 +147,9 @@ def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
 
 
 async def synthesize(text: str, settings: Settings) -> bytes:
-    """Speak text with Kabir (Sarvam Bulbul V3) — Indian MALE, native Hinglish.
+    """Speak text with shubh (Sarvam Bulbul V3, default male, hi-IN) — Indian MALE, native Hinglish.
 
-    Fallback chain: Sarvam Kabir (natural Hinglish, PRIMARY)
+    Fallback chain: Sarvam shubh (natural Hinglish, PRIMARY)
                     -> Edge Prabhat (Indian male Hinglish, if Sarvam fails)
                     -> gTTS Hindi (natural)
                     -> Kokoro Hindi (offline, last resort).
@@ -160,7 +160,7 @@ async def synthesize(text: str, settings: Settings) -> bytes:
     # If the cleaned text became empty (e.g. only a URL), say a gentle filler.
     if not clean.strip():
         clean = "लिंक मिला"
-    # Primary: Sarvam Bulbul V3 (Kabir) — best Hinglish male voice
+    # Primary: Sarvam Bulbul V3 (shubh, default male) — best Hinglish male voice
     try:
         return await asyncio.to_thread(_sarvam_tts, clean, settings)
     except Exception as e:  # noqa: BLE001

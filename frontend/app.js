@@ -14,6 +14,9 @@ const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 
 let audioEl = new Audio();
+audioEl.setAttribute("playsinline", "");
+audioEl.setAttribute("webkit-playsinline", "");
+audioEl.preload = "auto";
 let recog = null, listening = false, busy = false;
 
 // ---------- audio unlock (mobile autoplay policy) ----------
@@ -117,7 +120,7 @@ function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return false;
   recog = new SR();
-  recog.lang = "hi-IN"; // handles Hinglish; English words pass through
+  recog.lang = "en-IN"; // Hinglish (Roman Hindi+English) — best for Web Speech; hi-IN mangles Roman
   recog.interimResults = false;
   recog.continuous = false;
   recog.onresult = (e) => {
