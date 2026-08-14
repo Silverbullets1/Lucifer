@@ -1,9 +1,7 @@
 // LUCIFER — Frontend logic
-// Talks to backend via Cloudflare tunnel (working). Vercel proxy had POST 404, reverted.
-// Mic uses browser Web Speech API (Hindi + English). Text fallback always works.
-
-// ===== CONFIG: backend via Cloudflare tunnel (stable, working) =====
-const API_BASE = "https://applications-dice-perfectly-greetings.trycloudflare.com";   // <- auto-synced tunnel URL
+// ===== CONFIG: backend via Vercel serverless proxy (HTTPS, no mixed-content) =====
+// Same-origin /api/* -> Vercel function -> VPS:8000 (HTTP, server-side). No tunnel needed.
+const API_BASE = "/api";
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
