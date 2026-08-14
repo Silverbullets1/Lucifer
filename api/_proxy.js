@@ -1,5 +1,4 @@
 const VPS_BASE = "http://152.67.14.127:8000";
-const BLOCKED = new Set(["transfer-encoding", "connection", "content-encoding", "content-length"]);
 
 async function proxy(req, res, path) {
   const url = new URL(req.url, "http://localhost");
@@ -29,9 +28,14 @@ async function proxy(req, res, path) {
   try {
     const up = await fetch(target, { method: req.method, headers, body, redirect: "manual" });
     res.statusCode = up.status;
-    up.headers.forEach((v, k) => { if (!BLOCKED.has(k.toLowerCase())) res.setHeader(k, v); });
-    const buf = Buffer.from(await up.arrayBuffer());
-    res.end(buf);
+    // forward only simple string headers (skip multi-value / hop-by-hop)
+    up.headers.forEach((v, k) => {
+      const lk = k.toLowerCase();
+      if (["transfer-encoding", "connection", "content-encoding", "content-length"].includes(lk)) return;
+      try { res.setHeader(k, v); } catch (_) {}
+    });
+    const text = await up.text();
+    res.end(text);
   } catch (e) {
     res.statusCode = 502;
     res.setHeader("content-type", "application/json");
