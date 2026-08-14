@@ -1,11 +1,10 @@
 const VPS_BASE = "http://152.67.14.127:8000";
 const BLOCKED = new Set(["transfer-encoding", "connection", "content-encoding", "content-length"]);
 
-async function proxy(req, path) {
+async function proxy(req, res, path) {
   const url = new URL(req.url, "http://localhost");
   const target = VPS_BASE + "/" + path + url.search;
 
-  // Build upstream headers from Vercel req.headers (Headers object or plain)
   const headers = {};
   if (req.headers && typeof req.headers.forEach === "function") {
     req.headers.forEach((v, k) => { if (k.toLowerCase() !== "host" && k.toLowerCase() !== "connection") headers[k] = v; });
@@ -17,17 +16,27 @@ async function proxy(req, path) {
   }
 
   let body;
-  if (req.method === "GET" || req.method === "HEAD") body = undefined;
-  else {
-    const buf = await req.arrayBuffer();
-    body = buf.byteLength ? Buffer.from(buf) : undefined;
+  if (req.method === "GET" || req.method === "HEAD") {
+    body = undefined;
+  } else {
+    body = await new Promise((resolve) => {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => resolve(Buffer.concat(chunks)));
+    });
   }
 
-  const up = await fetch(target, { method: req.method, headers, body, redirect: "manual" });
-  const outHeaders = {};
-  up.headers.forEach((v, k) => { if (!BLOCKED.has(k.toLowerCase())) outHeaders[k] = v; });
-  const buf = Buffer.from(await up.arrayBuffer());
-  return new Response(buf, { status: up.status, headers: outHeaders });
+  try {
+    const up = await fetch(target, { method: req.method, headers, body, redirect: "manual" });
+    res.statusCode = up.status;
+    up.headers.forEach((v, k) => { if (!BLOCKED.has(k.toLowerCase())) res.setHeader(k, v); });
+    const buf = Buffer.from(await up.arrayBuffer());
+    res.end(buf);
+  } catch (e) {
+    res.statusCode = 502;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ error: "VPS unreachable", detail: String(e) }));
+  }
 }
 
 module.exports = { proxy };
