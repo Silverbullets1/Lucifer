@@ -303,28 +303,57 @@ async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        async with client.stream(
-            "POST", f"{base}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}",
-                     "Content-Type": "application/json"},
-            json={"model": Settings().model, "messages": messages,
-                  "max_tokens": 700, "temperature": 0.8, "stream": True},
-        ) as resp:
-            resp.raise_for_status()
-            # SSE parse: lines "data: {...}" ; reasoning then content chunks.
-            buf = ""
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                payload = line[5:].strip()
-                if payload == "[DONE]":
-                    break
-                try:
-                    chunk = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                text = delta.get("content")
-                if text:
-                    yield text
+    # Retry + model fallback: if primary model 503s (Nous upstream capacity
+    # blip) retry, then fall back to a secondary free model so the user never
+    # sees a hard "Connection error".
+    models = [Settings().model, "tencent/hy3:free"]
+    # de-dup while preserving order
+    seen = set()
+    models = [m for m in models if not (m in seen or seen.add(m))]
+    last_err = None
+
+    for attempt in range(max(1, len(models)) * 2):
+        model = models[attempt % len(models)]
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream(
+                    "POST", f"{base}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}",
+                             "Content-Type": "application/json"},
+                    json={"model": model, "messages": messages,
+                          "max_tokens": 700, "temperature": 0.8, "stream": True},
+                ) as resp:
+                    if resp.status_code >= 500:
+                        # transient upstream (e.g. 503 capacity) -> retry
+                        last_err = f"HTTP {resp.status_code}"
+                        await asyncio.sleep(1.5)
+                        continue
+                    resp.raise_for_status()
+                    # SSE parse: lines "data: {...}" ; reasoning then content chunks.
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        payload = line[5:].strip()
+                        if payload == "[DONE]":
+                            return
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        text = delta.get("content")
+                        if text:
+                            yield text
+                    return
+        except (httpx.HTTPStatusError, httpx.TransportError,
+                httpx.TimeoutException) as e:
+            last_err = str(e)
+            await asyncio.sleep(1.5)
+            continue
+
+    # All models/retries exhausted — surface a clean Hinglish message.
+    yield (
+        "Arrey bhai, abhi mere dimaag (LLM) thoda hang ho gaya — Nous server "
+        "pe capacity issue aa rha. Thodi der baad try kar, ya fir se 'hello' "
+        f"bol. (tech: {last_err or 'unknown'})"
+    )
