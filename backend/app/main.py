@@ -1,15 +1,19 @@
 """
 LUCIFER — Voice Assistant Backend
-FastAPI server that wires the 3-layer voice pipeline:
+FastAPI server that wires the voice pipeline:
   Mic audio (from Flutter app) -> STT (faster-whisper)
                           -> LLM (tencent/hy3:free via Nous, + Lucifer persona)
-                          -> TTS (Kokoro) -> audio back to app
-Cross-platform: same backend serves Windows + Android Flutter clients.
+                          -> TEXT reply (TTS is handled 100% on the FRONTEND now)
+
+TTS was moved OFF the backend entirely: the backend only ever returns text,
+and the browser (web / Android WebView / iOS WKWebView) synthesizes speech
+via a Vercel serverless proxy to Sarvam. This keeps the Indian male Hinglish
+voice cross-platform without shipping any audio pipeline on the server.
 
 BRAIN = tencent/hy3:free (Nous Portal). No Ollama. Free, reasoning model.
 """
 from __future__ import annotations
-import os, io, logging, asyncio, tempfile, base64
+import os, io, logging, asyncio, re as _re
 from pathlib import Path
 from typing import AsyncGenerator
 from dotenv import load_dotenv
@@ -22,12 +26,9 @@ load_dotenv()
 from .config import settings
 from .brain import reply as brain_reply, stream_reply as brain_stream
 from .stt import transcribe
-from .tts import synthesize, synthesize_stream
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("lucifer")
-
-import re as _re
 
 # Reply sanitizer: strip emoji (TTS can't speak them) — persona also forbids
 # emoji/markdown, this is a safety net so nothing slips through to speech.
@@ -67,7 +68,7 @@ yaadon bhool bhuli bhul gayi bhul gaya bhul gaye ro rota roti rote hansee hansi
 hans hansna hansti hanske rona roya royi roye muskura muskurahat muskurahat
 khushi khushiyaan khush dukhi dukh takleef pareshani gussa ghussa naraz naraz
 narazgi pyaar mohabbat chahta chahti chahte chahta chahna sona soti sote sota
-kaam kam kar rahe ho the tum aaj kal ab subah shaam raat din savera subah
+kaam kar rahe ho the tum aaj kal ab subah shaam raat din savera subah
 sakal sukoon aaram aaraam thakan thake thaki thake hue hue thi thi thi thi
 """.split())
 
@@ -115,17 +116,21 @@ def sanitize_reply(text: str) -> str:
     text = _re.sub(r"\s{2,}", " ", text).strip()  # collapse extra spaces
     return text
 
-app = FastAPI(title="Lucifer Voice Assistant", version="0.2.0")
+app = FastAPI(title="Lucifer Voice Assistant", version="0.3.0")
+
+# NOTE: frontend (browser) does TTS itself via /api/tts -> Sarvam, so we only
+# need CORS for the web fetch calls. Keep permissive for dev convenience.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["*"],
     allow_methods=["*"], allow_headers=["*"],
 )
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": settings.model, "device": settings.device}
+    return {"status": "ok", "model": settings.model, "device": settings.device,
+            "tts": "frontend (browser -> /api/tts -> Sarvam)"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -139,7 +144,7 @@ async def root():
     .sub{color:#7b2dff;margin-top:1rem}.tag{color:#00e5ff}</style></head>
     <body><div class="box"><div class="glow">🔥 LUCIFER</div>
     <div class="sub">Voice Assistant backend is <span class="tag">ONLINE</span></div>
-    <div class="sub">Brain: tencent/hy3:free · TTS: Kokoro (male)</div></div></body></html>
+    <div class="sub">Brain: tencent/hy3:free · TTS: browser (frontend /api/tts)</div></div></body></html>
     """
 
 
@@ -187,7 +192,7 @@ async def chat_stream(req: ChatReq):
 
 @app.post("/voice")
 async def voice(audio: UploadFile = File(...)):
-    """Voice-in: audio file -> STT -> LLM -> TTS audio (wav bytes)."""
+    """Voice-in: audio file -> STT -> LLM -> text (TTS is frontend's job)."""
     data = await audio.read()
     if not data:
         raise HTTPException(400, "empty audio")
@@ -197,7 +202,7 @@ async def voice(audio: UploadFile = File(...)):
 @app.get("/voice")
 async def voice_get():
     """GET fallback so stale cached JS sending GET still works (returns hint)."""
-    return {"text": "", "reply": "", "audio_b64": "", "note": "use POST /voice with audio"}
+    return {"text": "", "reply": "", "note": "TTS moved to frontend; POST audio for STT+LLM text"}
 
 
 async def _handle_voice(data: bytes):
@@ -209,8 +214,8 @@ async def _handle_voice(data: bytes):
         raise HTTPException(500, f"stt: {e}")
     log.info("USER: %s", text)
     if not text.strip():
-        return {"text": "", "reply": "", "audio_b64": ""}
-    # 2) LLM
+        return {"text": "", "reply": ""}
+    # 2) LLM -> text only (no TTS on the backend)
     try:
         reply = await brain_reply(text)
         reply = sanitize_reply(reply)
@@ -218,68 +223,13 @@ async def _handle_voice(data: bytes):
         log.exception("llm failed")
         raise HTTPException(500, f"llm: {e}")
     log.info("LUCIFER: %s", reply)
-    # 3) TTS (plain natural Hindi voice)
-    try:
-        wav_bytes = await synthesize(reply, settings)
-    except Exception as e:
-        log.exception("tts failed")
-        return {"text": text, "reply": reply, "audio_b64": ""}
-    return {"text": text, "reply": reply, "audio_b64": base64.b64encode(wav_bytes).decode()}
-
-
-@app.post("/tts")
-async def tts(req: ChatReq):
-    """Text-in -> TTS audio (wav bytes). Used by the web frontend to speak replies."""
-    try:
-        wav_bytes = await synthesize(req.text, settings)
-    except Exception as e:
-        log.exception("tts failed")
-        raise HTTPException(500, f"tts: {e}")
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/mpeg")
-
-
-@app.post("/chat/voice/stream")
-async def chat_voice_stream(req: ChatReq):
-    """Streaming voice: LLM tokens -> sentence-split -> TTS audio chunks.
-
-    Returns a multipart-ish audio/mpeg byte stream where each emitted chunk is
-    one spoken sentence's audio, so the client can start playing almost
-    immediately (like text streaming) instead of waiting for the full reply.
-    Also sends a leading JSON metadata line (Content-Type negotiation handled
-    by the client reading the raw body).
-    """
-    async def gen():
-        buf = ""
-        first = True
-        async for tok in brain_stream(req.text, req.history or []):
-            buf += tok
-            # Emit a sentence as soon as a boundary appears.
-            # We flush on terminal punctuation; leftover stays buffered.
-            while True:
-                # find first sentence boundary
-                m = None
-                for sep in [".", "!", "?", "।", "\n"]:
-                    idx = buf.find(sep)
-                    if idx != -1 and (m is None or idx < m):
-                        m = idx
-                if m is None:
-                    break
-                sentence = buf[: m + 1].strip()
-                buf = buf[m + 1:]
-                if not sentence:
-                    continue
-                async for audio in synthesize_stream(sentence, settings):
-                    yield audio
-        # flush remainder
-        if buf.strip():
-            async for audio in synthesize_stream(buf.strip(), settings):
-                yield audio
-    return StreamingResponse(gen(), media_type="audio/mpeg")
+    return {"text": text, "reply": reply}
 
 
 @app.websocket("/ws")
 async def ws(ws: WebSocket):
-    """Streaming voice loop: client sends audio chunks, server replies audio."""
+    """Streaming voice loop: client sends audio chunks, server replies TEXT only
+    (frontend synthesizes speech via Sarvam)."""
     await ws.accept()
     try:
         while True:
@@ -297,8 +247,6 @@ async def ws(ws: WebSocket):
                 continue
             reply = await brain_reply(text)
             await ws.send_json({"type": "llm", "text": sanitize_reply(reply)})
-            wav = await synthesize(reply, settings)
-            await ws.send_bytes(wav)
     except WebSocketDisconnect:
         pass
     except Exception:

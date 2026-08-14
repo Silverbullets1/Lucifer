@@ -98,30 +98,32 @@ async function askLucifer(text) {
 
 async function speak(text) {
   try {
-    const r = await fetch(API_BASE + "/chat/voice/stream", {
+    // TTS is 100% frontend-side: we ask the Vercel serverless proxy to
+    // synthesize with Sarvam (server-side key, never exposed to browser),
+    // and stream the mp3 chunks back for low-latency queued playback.
+    const r = await fetch(API_BASE + "/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    if (!r.ok) throw new Error("tts stream failed");
-    // Stream audio chunks and play them as they arrive (low latency).
+    if (!r.ok) throw new Error("tts failed " + r.status);
+    if (!r.body) { addLine("err", "TTS audio unavailable"); return; }
     const reader = r.body.getReader();
     const audioQueue = [];
     let playing = false;
     let acc = new Blob([], { type: "audio/mpeg" });
     let accSize = 0;
 
-    const playNext = async () => {
-      if (playing) return;
-      if (audioQueue.length === 0) return;
+    const playNext = () => {
+      if (playing || audioQueue.length === 0) return;
       playing = true;
       const blob = audioQueue.shift();
       const url = URL.createObjectURL(blob);
       const el = new Audio();
       el.src = url;
       el.type = "audio/mpeg";
-      try { await el.play(); } catch (_) {}
       el.onended = () => { URL.revokeObjectURL(url); playing = false; playNext(); };
+      el.play().catch(() => { playing = false; playNext(); });
     };
 
     while (true) {
@@ -130,8 +132,7 @@ async function speak(text) {
       if (!value) continue;
       acc = new Blob([acc, value], { type: "audio/mpeg" });
       accSize += value.length;
-      // Emit a playable chunk every ~16KB so playback starts fast.
-      if (accSize >= 16384) {
+      if (accSize >= 16384) {           // ~16KB chunks -> playback starts fast
         audioQueue.push(acc);
         acc = new Blob([], { type: "audio/mpeg" });
         accSize = 0;
@@ -140,7 +141,7 @@ async function speak(text) {
     }
     if (accSize > 0) { audioQueue.push(acc); playNext(); }
   } catch (e) {
-    console.warn("TTS stream failed, skipping audio", e);
+    console.warn("TTS failed, skipping audio", e);
   }
 }
 
