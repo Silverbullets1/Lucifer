@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 class Settings(BaseModel):
     host: str = Field(default=os.getenv("LUCIFER_HOST", "0.0.0.0"))
-    port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8723")))
+    port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8000")))
     # BRAIN = upstage/solar-pro4:free via Nous Portal (no Ollama). Free, FAST
     # (~4.5s, Hindi-native), unlike tencent/hy3:free which took 11-21s and
     # often returned empty content (it's a slow reasoning model).
@@ -29,6 +29,15 @@ class Settings(BaseModel):
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
     stt_model: str = Field(default=os.getenv("STT_MODEL", "small"))    # tiny|base|small|medium
+    # STT backend selection (SAM: OpenAI Whisper via Nous FREE gateway = 1st).
+    #   nous_whisper  -> OpenAI Whisper through Nous Tool Gateway (FREE, key-less,
+    #                    better Hinglish, offloads VPS CPU). Falls back to local on error.
+    #   local         -> faster-whisper on VPS CPU (default offline).
+    stt_backend: str = Field(default=os.getenv("STT_BACKEND", "nous_whisper"))
+    # Nous Subscriber token + gateway (auto-read from ~/.hermes/auth.json).
+    hermes_home: str = Field(default=os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes")))
+    nous_gateway_domain: str = Field(default=os.getenv("TOOL_GATEWAY_DOMAIN", "nousresearch.com"))
+    nous_gateway_scheme: str = Field(default=os.getenv("TOOL_GATEWAY_SCHEME", "https"))
     # TTS VOICE POLICY (per SAM): ONLY Hindi/Hinglish.
     # Primary: Sarvam Bulbul V3 — shubh (Indian MALE, default, native Hinglish, hi-IN).
     # Fallback: Edge TTS Prabhat (Indian MALE, Hinglish) if Sarvam fails.

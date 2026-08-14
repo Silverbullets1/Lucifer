@@ -114,11 +114,15 @@ _WEB_TRIGGERS = re.compile(
 
 def _ddg_instant(q: str) -> str:
     try:
+        import urllib.parse
+        url = ("https://api.duckduckgo.com/?q=" + urllib.parse.quote(q)
+               + "&format=json&no_html=1&skip_disambig=1")
         out = subprocess.run(
-            ["curl", "-s", "--max-time", "6",
-             f"https://api.duckduckgo.com/?q={shlex.quote(q)}&format=json&no_html=1"],
+            ["curl", "-s", "--max-time", "6", url],
             capture_output=True, text=True, timeout=8,
         ).stdout
+        if not out.strip():
+            return ""
         d = json.loads(out)
         ans = (d.get("AbstractText") or "").strip()
         if ans:
@@ -149,10 +153,58 @@ def _wiki_search(q: str) -> str:
     return ""
 
 
-def web_fact(query: str) -> str:
-    """Live web lookup for GK / current-affairs questions. Returns text or ''."""
+def _firecrawl_search(q: str, settings=None) -> str:
+    """Nous Tool Gateway -> Firecrawl (FREE, key-less). 3rd-tier web fallback
+    after DuckDuckGo + Wikipedia. Agent-grade search + full-page extraction.
+    Uses the gateway /v2/search endpoint (no extra SDK needed)."""
+    try:
+        import json
+        import urllib.request
+        from pathlib import Path
+        home = (settings.hermes_home if settings else os.path.expanduser("~/.hermes"))
+        auth = Path(home) / "auth.json"
+        if not auth.is_file():
+            return ""
+        data = json.loads(auth.read_text(encoding="utf-8-sig"))
+        nous = (data.get("providers") or {}).get("nous") or {}
+        token = nous.get("access_token")
+        if not token:
+            return ""
+        domain = (settings.nous_gateway_domain if settings else "nousresearch.com")
+        scheme = (settings.nous_gateway_scheme if settings else "https")
+        origin = f"{scheme}://firecrawl-gateway.{domain}"
+        url = f"{origin}/v2/search"
+        body = json.dumps({"query": q, "limit": 3, "origin": "lucifer-bot"}).encode()
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            resp = json.loads(r.read())
+        # Firecrawl v2: {"success":true,"data":{"web":[{url,title,description}]}}
+        data = resp.get("data") or {}
+        items = data.get("web") or []
+        if not items and isinstance(data, list):
+            items = data
+        for it in items[:3]:
+            if isinstance(it, dict):
+                txt = (it.get("description") or it.get("markdown") or it.get("content")
+                       or it.get("snippet") or it.get("text") or "").strip()
+                if txt:
+                    return txt[:1200]
+            elif isinstance(it, str) and it.strip():
+                return it.strip()[:1200]
+    except Exception as e:
+        log.warning("web_fact firecrawl failed: %s", e)
+    return ""
+
+
+def web_fact(query: str, settings=None) -> str:
+    """Live web lookup for GK / current-affairs questions. Returns text or ''.
+    Order: Firecrawl/Nous (1st, FREE + reliable) -> DuckDuckGo (2nd) -> Wikipedia (3rd)."""
     q = query.strip()
-    ans = _ddg_instant(q)
+    ans = _firecrawl_search(q, settings)
+    if not ans:
+        ans = _ddg_instant(q)
     if not ans:
         ans = _wiki_search(q)
     return ans
