@@ -2,5 +2,6 @@
   "version": 2,
   "buildCommand": null,
   "outputDirectory": ".",
-  "framework": null
+  "framework": null,
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
 }
