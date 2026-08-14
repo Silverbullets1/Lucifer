@@ -1,2 +1,2 @@
 const { proxy } = require("../_proxy.js");
-module.exports = (req, res) => proxy(req, res, "/voice");
+module.exports = (req, res) => proxy(req, "voice");
