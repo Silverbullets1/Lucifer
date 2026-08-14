@@ -1,5 +1,8 @@
 {
   "name": "lucifer-frontend",
   "version": "1.0.0",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "edge-tts": "^1.3.0"
+  }
 }

@@ -1,76 +1,44 @@
 // LUCIFER TTS proxy — runs on Vercel serverless (NOT the browser).
-// The frontend POSTs {text} here; we call Sarvam (shubh, Indian MALE, hi-IN)
-// server-side using the key from Vercel env (SARVAM_API_KEY) so it NEVER
-// reaches the client. Cross-platform: works on web / Android WebView /
-// iOS WKWebView because the browser only ever receives audio bytes.
+// Uses Microsoft Edge TTS (edge-tts) with en-IN-PrabhatNeural — native Hindi,
+// keyless, free. The frontend POSTs {text, speaker?} and we stream back mp3.
+// No API keys needed (Edge TTS is keyless).
+
+const { EdgeTTS } = require("edge-tts");
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
-    res.statusCode = 405;
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ error: "use POST" }));
+    res.status(405).json({ error: "method_not_allowed" });
     return;
   }
   let body;
   try {
     body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  } catch (_) {
-    body = {};
-  }
-  const text = (body && body.text) || "";
-  if (!text || !text.trim()) {
-    res.statusCode = 400;
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ error: "empty text" }));
+  } catch (e) {
+    res.status(400).json({ error: "bad_json" });
     return;
   }
-
-  const key = process.env.SARVAM_API_KEY;
-  if (!key) {
-    res.statusCode = 500;
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ error: "SARVAM_API_KEY not set on Vercel" }));
+  const text = (body && body.text ? String(body.text) : "").trim();
+  if (!text) {
+    res.status(400).json({ error: "empty_text" });
     return;
   }
+  const speaker = (body && body.speaker) || "en-IN-PrabhatNeural";
 
   try {
-    const r = await fetch("https://api.sarvam.ai/text-to-speech", {
-      method: "POST",
-      headers: {
-        "api-subscription-key": key,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: text,
-        target_language_code: "hi-IN",
-        speaker: process.env.SARVAM_SPEAKER || "shubh",
-        model: "bulbul:v3",
-        output_audio_codec: "mp3",
-      }),
+    const tts = new EdgeTTS();
+    const chunks = [];
+    const stream = tts.ttsStream(text, speaker);
+    stream.on("data", (d) => chunks.push(d));
+    await new Promise((resolve, reject) => {
+      stream.on("end", resolve);
+      stream.on("error", reject);
     });
-    if (!r.ok) {
-      const detail = await r.text().catch(() => "");
-      res.statusCode = 502;
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ error: "sarvam_upstream", status: r.status, detail: detail.slice(0, 200) }));
-      return;
-    }
-    const payload = await r.json();
-    const audios = payload.audios || [];
-    if (!audios.length) {
-      res.statusCode = 502;
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ error: "sarvam_no_audio" }));
-      return;
-    }
-    // Sarvam returns base64 mp3; decode and stream raw bytes to the browser.
-    const buf = Buffer.from(audios[0], "base64");
-    res.statusCode = 200;
-    res.setHeader("content-type", "audio/mpeg");
-    res.setHeader("cache-control", "no-store");
-    res.end(buf);
+    const audio = Buffer.concat(chunks);
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "no-store");
+    res.status(200).send(audio);
   } catch (e) {
-    res.statusCode = 502;
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ error: "tts_proxy_failed", detail: String(e) }));
+    console.error("TTS error:", e && e.message);
+    res.status(502).json({ error: "tts_failed", detail: String(e && e.message) });
   }
 };

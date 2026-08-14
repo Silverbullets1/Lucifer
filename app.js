@@ -99,12 +99,12 @@ async function askLucifer(text) {
 async function speak(text) {
   try {
     // TTS is 100% frontend-side: we ask the Vercel serverless proxy to
-    // synthesize with Sarvam (server-side key, never exposed to browser),
+    // synthesize with Edge TTS (en-IN-PrabhatNeural — native Hindi, keyless),
     // and stream the mp3 chunks back for low-latency queued playback.
     const r = await fetch(API_BASE + "/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, speaker: "en-IN-PrabhatNeural" }),
     });
     if (!r.ok) throw new Error("tts failed " + r.status);
     if (!r.body) { addLine("err", "TTS audio unavailable"); return; }
