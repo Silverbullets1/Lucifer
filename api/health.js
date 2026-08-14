@@ -1,2 +1,2 @@
-import { proxy } from "../_proxy.mjs";
-export default (req, res) => proxy(req, res, "/health");
+const { proxy } = require("../_proxy.js");
+module.exports = (req, res) => proxy(req, res, "/health");
