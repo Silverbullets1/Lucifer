@@ -26,7 +26,7 @@ function synthesize(text, voice) {
       reject(new Error("tts_timeout"));
     }, 30000);
 
-    ws.on("open", () => {
+    ws.addEventListener("open", () => {
       // 1) config
       ws.send(
         `X-Timestamp: ${new Date().toISOString()}\r\n` +
@@ -52,7 +52,8 @@ function synthesize(text, voice) {
       );
     });
 
-    ws.on("message", (data) => {
+    ws.addEventListener("message", (ev) => {
+      const data = ev.data;
       const str = data.toString();
       if (str.includes("Path:audio")) {
         audioStarted = true;
@@ -67,12 +68,12 @@ function synthesize(text, voice) {
       }
     });
 
-    ws.on("close", () => {
+    ws.addEventListener("close", () => {
       clearTimeout(timer);
       if (chunks.length) resolve(Buffer.concat(chunks));
       else reject(new Error("no_audio"));
     });
-    ws.on("error", (e) => {
+    ws.addEventListener("error", (e) => {
       clearTimeout(timer);
       reject(e);
     });
