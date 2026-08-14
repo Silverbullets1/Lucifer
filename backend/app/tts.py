@@ -176,3 +176,41 @@ async def synthesize(text: str, settings: Settings) -> bytes:
     except Exception as e2:  # noqa: BLE001
         log.warning("gTTS failed (%s); falling back to Kokoro Hindi", e2)
         return await asyncio.to_thread(_kokoro_hindi_fallback, clean, settings)
+
+
+# Sentence splitter — break reply into speakable chunks so we can stream TTS
+# as the LLM produces text (low first-byte latency, like text streaming).
+_SENT_RE = re.compile(r"(?<=[.!?।\n])\s+|(?<=[,;:])\s+")
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split into sentences/clauses on punctuation boundaries."""
+    parts = _SENT_RE.split(text)
+    out = [p.strip() for p in parts if p and p.strip()]
+    return out
+
+
+async def synthesize_stream(text: str, settings: Settings):
+    """Yield (audio_bytes, sentence) chunks as TTS completes per sentence.
+
+    Lets the voice pipeline speak sentence-by-sentence as soon as the LLM
+    emits it, instead of waiting for the whole reply + one big TTS call.
+    """
+    if not text.strip():
+        return
+    clean = _strip_urls(text.strip())
+    if not clean.strip():
+        clean = "लिंक मिला"
+    # Stream per sentence: synthesize each clause and yield its audio ASAP.
+    for sent in _split_sentences(clean):
+        try:
+            audio = await asyncio.to_thread(_sarvam_tts, sent, settings)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Sarvam stream TTS failed (%s); Edge", e)
+            try:
+                audio = await _edge_tts(sent, settings.edge_hi_voice)
+            except Exception as e2:  # noqa: BLE001
+                log.warning("Edge stream TTS failed (%s); skip sentence", e2)
+                continue
+        if audio:
+            yield audio

@@ -98,20 +98,49 @@ async function askLucifer(text) {
 
 async function speak(text) {
   try {
-    const r = await fetch(API_BASE + "/tts", {
+    const r = await fetch(API_BASE + "/chat/voice/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    if (!r.ok) throw new Error("tts failed");
-    const blob = await r.blob();
-    if (!blob.size) throw new Error("empty audio");
-    const url = URL.createObjectURL(blob);
-    audioEl.src = url;
-    audioEl.type = "audio/mpeg";
-    await audioEl.play();
+    if (!r.ok) throw new Error("tts stream failed");
+    // Stream audio chunks and play them as they arrive (low latency).
+    const reader = r.body.getReader();
+    const audioQueue = [];
+    let playing = false;
+    let acc = new Blob([], { type: "audio/mpeg" });
+    let accSize = 0;
+
+    const playNext = async () => {
+      if (playing) return;
+      if (audioQueue.length === 0) return;
+      playing = true;
+      const blob = audioQueue.shift();
+      const url = URL.createObjectURL(blob);
+      const el = new Audio();
+      el.src = url;
+      el.type = "audio/mpeg";
+      try { await el.play(); } catch (_) {}
+      el.onended = () => { URL.revokeObjectURL(url); playing = false; playNext(); };
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      acc = new Blob([acc, value], { type: "audio/mpeg" });
+      accSize += value.length;
+      // Emit a playable chunk every ~16KB so playback starts fast.
+      if (accSize >= 16384) {
+        audioQueue.push(acc);
+        acc = new Blob([], { type: "audio/mpeg" });
+        accSize = 0;
+        playNext();
+      }
+    }
+    if (accSize > 0) { audioQueue.push(acc); playNext(); }
   } catch (e) {
-    console.warn("TTS failed, skipping audio", e);
+    console.warn("TTS stream failed, skipping audio", e);
   }
 }
 

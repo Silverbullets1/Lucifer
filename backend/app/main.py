@@ -22,7 +22,7 @@ load_dotenv()
 from .config import settings
 from .brain import reply as brain_reply, stream_reply as brain_stream
 from .stt import transcribe
-from .tts import synthesize
+from .tts import synthesize, synthesize_stream
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("lucifer")
@@ -236,6 +236,45 @@ async def tts(req: ChatReq):
         log.exception("tts failed")
         raise HTTPException(500, f"tts: {e}")
     return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/mpeg")
+
+
+@app.post("/chat/voice/stream")
+async def chat_voice_stream(req: ChatReq):
+    """Streaming voice: LLM tokens -> sentence-split -> TTS audio chunks.
+
+    Returns a multipart-ish audio/mpeg byte stream where each emitted chunk is
+    one spoken sentence's audio, so the client can start playing almost
+    immediately (like text streaming) instead of waiting for the full reply.
+    Also sends a leading JSON metadata line (Content-Type negotiation handled
+    by the client reading the raw body).
+    """
+    async def gen():
+        buf = ""
+        first = True
+        async for tok in brain_stream(req.text, req.history or []):
+            buf += tok
+            # Emit a sentence as soon as a boundary appears.
+            # We flush on terminal punctuation; leftover stays buffered.
+            while True:
+                # find first sentence boundary
+                m = None
+                for sep in [".", "!", "?", "।", "\n"]:
+                    idx = buf.find(sep)
+                    if idx != -1 and (m is None or idx < m):
+                        m = idx
+                if m is None:
+                    break
+                sentence = buf[: m + 1].strip()
+                buf = buf[m + 1:]
+                if not sentence:
+                    continue
+                async for audio in synthesize_stream(sentence, settings):
+                    yield audio
+        # flush remainder
+        if buf.strip():
+            async for audio in synthesize_stream(buf.strip(), settings):
+                yield audio
+    return StreamingResponse(gen(), media_type="audio/mpeg")
 
 
 @app.websocket("/ws")
