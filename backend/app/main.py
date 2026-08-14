@@ -136,15 +136,15 @@ async def health():
 
 @app.post("/tts")
 async def tts(req: TTSReq):
-    """Text-in -> TTS audio (wav bytes). Backend-side synthesis."""
+    """Text-in -> TTS audio (mp3 bytes). Backend-side synthesis."""
     try:
-        wav_bytes = await synthesize(req.text, settings)
-        if not wav_bytes:
-            return Response(b"", status_code=502, media_type="audio/wav")
-        return Response(wav_bytes, media_type="audio/wav")
+        audio_bytes = await synthesize(req.text, settings)
+        if not audio_bytes:
+            return Response(b"", status_code=502, media_type="audio/mpeg")
+        return Response(audio_bytes, media_type="audio/mpeg")
     except Exception as e:
         log.exception("TTS error")
-        return Response(b"", status_code=502, media_type="audio/wav")
+        return Response(b"", status_code=502, media_type="audio/mpeg")
 
 
 @app.get("/", response_class=HTMLResponse)

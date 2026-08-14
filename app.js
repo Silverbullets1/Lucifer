@@ -13,21 +13,7 @@ const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn")
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 
-let audioEl = new Audio();
-audioEl.setAttribute("playsinline", "");
-audioEl.setAttribute("webkit-playsinline", "");
-audioEl.preload = "auto";
 let recog = null, listening = false, busy = false;
-
-// ---------- audio unlock (mobile autoplay policy) ----------
-let audioUnlocked = false;
-function unlockAudio() {
-  if (audioUnlocked) return;
-  audioUnlocked = true;
-  try { audioEl.play().then(() => audioEl.pause()).catch(() => {}); } catch (_) {}
-}
-document.addEventListener("pointerdown", unlockAudio, { once: true });
-document.addEventListener("keydown", unlockAudio, { once: true });
 
 // ---------- status ----------
 function setStatus(state) {
@@ -87,61 +73,12 @@ async function askLucifer(text) {
     const reply = (await r.text()).trim();
     if (!reply) throw new Error("empty reply");
     addLine("lu", reply);
-    // speak with Sarvam (backend) voice
-    await speak(reply);
+    // TTS is handled entirely on the backend (synthesis + playback via /tts).
+    // Frontend only displays the text reply.
   } catch (e) {
     addLine("err", "Connection error — backend down?");
   } finally {
     busy = false; setStatus("on"); orb.classList.remove("speaking");
-  }
-}
-
-async function speak(text) {
-  try {
-    // TTS is backend-side: ask the VPS proxy (/api/tts -> Vercel -> VPS:8000)
-    // to synthesize (Sarvam shubh + Edge PrabhatNeural fallback) and stream
-    // the wav chunks back for low-latency queued playback.
-    const r = await fetch(API_BASE + "/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!r.ok) throw new Error("tts failed " + r.status);
-    if (!r.body) { addLine("err", "TTS audio unavailable"); return; }
-    const reader = r.body.getReader();
-    const audioQueue = [];
-    let playing = false;
-    let acc = new Blob([], { type: "audio/mpeg" });
-    let accSize = 0;
-
-    const playNext = () => {
-      if (playing || audioQueue.length === 0) return;
-      playing = true;
-      const blob = audioQueue.shift();
-      const url = URL.createObjectURL(blob);
-      const el = new Audio();
-      el.src = url;
-      el.type = "audio/mpeg";
-      el.onended = () => { URL.revokeObjectURL(url); playing = false; playNext(); };
-      el.play().catch(() => { playing = false; playNext(); });
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      acc = new Blob([acc, value], { type: "audio/mpeg" });
-      accSize += value.length;
-      if (accSize >= 16384) {           // ~16KB chunks -> playback starts fast
-        audioQueue.push(acc);
-        acc = new Blob([], { type: "audio/mpeg" });
-        accSize = 0;
-        playNext();
-      }
-    }
-    if (accSize > 0) { audioQueue.push(acc); playNext(); }
-  } catch (e) {
-    console.warn("TTS failed, skipping audio", e);
   }
 }
 

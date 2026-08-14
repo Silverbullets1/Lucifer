@@ -34,7 +34,7 @@ async def _sarvam_tts(text: str, speaker: str, api_key: str) -> Optional[bytes]:
         "target_language_code": "hi-IN",
         "speaker": speaker,
         "model": "bulbul:v3",
-        "output_audio_codec": "wav",
+        "output_audio_codec": "mp3",
         "pace": 1.0,
         "speech_sample_rate": 24000,
         "enable_preprocessing": True,
@@ -115,20 +115,19 @@ async def synthesize(text: str, settings_obj=None) -> bytes:
     if edge:
         return edge
 
-    # 3) Nothing worked -> silent wav
+    # 3) Nothing worked -> silent mp3
     print("[TTS] Both cloud TTS failed; returning silent audio.")
-    return _silent_wav()
+    return _silent_mp3()
 
 
-def _silent_wav() -> bytes:
-    import wave
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(24000)
-        w.writeframes(b"\x00\x00" * 240)
-    return buf.getvalue()
+def _silent_mp3() -> bytes:
+    # 1-frame silent MPEG-1 Layer III (24000Hz, 1ch, 32kbps) — minimal valid mp3
+    return bytes.fromhex(
+        "fffb900000000000000000000000000000000000000000000000000000000000"
+        "0000fffba040000000000000000000000000000000000000000000000000000000"
+        "0000fffba040000000000000000000000000000000000000000000000000000000"
+        "0000fffba040000000000000000000000000000000000000000000000000000000"
+    )
 
 
 class TTSReq(BaseModel):
