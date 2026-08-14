@@ -19,13 +19,14 @@ from typing import AsyncGenerator
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 load_dotenv()
 from .config import settings
 from .brain import reply as brain_reply, stream_reply as brain_stream
 from .stt import transcribe
+from .tts import synthesize, TTSReq
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("lucifer")
@@ -130,7 +131,20 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return {"status": "ok", "model": settings.model, "device": settings.device,
-            "tts": "frontend (browser -> /api/tts -> Sarvam)"}
+            "tts": "backend (Sarvam shubh + Edge PrabhatNeural fallback)"}
+
+
+@app.post("/tts")
+async def tts(req: TTSReq):
+    """Text-in -> TTS audio (wav bytes). Backend-side synthesis."""
+    try:
+        wav_bytes = await synthesize(req.text, settings)
+        if not wav_bytes:
+            return Response(b"", status_code=502, media_type="audio/wav")
+        return Response(wav_bytes, media_type="audio/wav")
+    except Exception as e:
+        log.exception("TTS error")
+        return Response(b"", status_code=502, media_type="audio/wav")
 
 
 @app.get("/", response_class=HTMLResponse)
