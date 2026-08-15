@@ -105,7 +105,7 @@ async function speak(text) {
 
 // ---------- voice input (mic -> backend Whisper via Nous) with VAD ----------
 let mediaRecorder = null, audioChunks = [], micStream = null, micReady = false;
-let audioCtx = null, analyser = null, silenceTimer = null, vadActive = false, hasSpoken = false;
+let audioCtx = null, silenceTimer = null, vadActive = false, hasSpoken = false;
 let maxRecTimer = null;
 
 async function ensureMic() {
@@ -117,27 +117,15 @@ async function ensureMic() {
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
     });
-    // Match AudioContext sampleRate to the mic track so the AnalyserNode
-    // actually receives data (mismatched rates = silent analyser = VAD dead).
-    let sr = 16000;
-    try { sr = micStream.getAudioTracks()[0].getSettings().sampleRate || 16000; } catch (_) {}
-    // Set up VAD (voice activity detection) via Web Audio AnalyserNode
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sr });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === "suspended") await audioCtx.resume();
-    const src = audioCtx.createMediaStreamSource(micStream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.4;
-    // Connect analyser -> zero-gain node -> destination so the analyser
-    // receives data (some browsers won't feed it otherwise). Gain 0 = no echo.
-    const silent = audioCtx.createGain();
-    silent.gain.value = 0;
-    src.connect(analyser);
-    analyser.connect(silent);
-    silent.connect(audioCtx.destination);
-
     mediaRecorder = new MediaRecorder(micStream, { mimeType: pickMime() });
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.ondataavailable = async (e) => {
+      if (e.data.size > 0) {
+        audioChunks.push(e.data);
+        analyseChunk(e.data); // VAD on real recorded audio
+      }
+    };
     mediaRecorder.onstop = async () => {
       stopVAD();
       const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
@@ -158,29 +146,28 @@ function pickMime() {
   return "";
 }
 
-function startVAD() {
-  vadActive = true;
-  hasSpoken = false;
-  const buf = new Uint8Array(analyser.fftSize);
-  const check = () => {
-    if (!vadActive) return;
-    analyser.getByteTimeDomainData(buf);
+// VAD via real recorded-chunk RMS (works everywhere MediaRecorder works,
+// unlike AnalyserNode which is flaky on mobile). 3s silence after speech -> stop.
+async function analyseChunk(blob) {
+  if (!vadActive || !audioCtx) return;
+  try {
+    const buf = await blob.arrayBuffer();
+    const audio = await audioCtx.decodeAudioData(buf.slice(0));
+    const data = audio.getChannelData(0);
     let sum = 0;
-    for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
-    const rms = Math.sqrt(sum / buf.length);
-    if (rms >= 0.015) {
-      // speech detected
+    for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+    const rms = Math.sqrt(sum / data.length);
+    if (rms >= 0.01) {
       hasSpoken = true;
       clearTimeout(silenceTimer); silenceTimer = null;
     } else if (hasSpoken) {
-      // silence AFTER speech -> start 3s auto-stop countdown
-      if (!silenceTimer) {
-        silenceTimer = setTimeout(() => { if (listening) stopListen(); }, 3000);
-      }
+      if (!silenceTimer) silenceTimer = setTimeout(() => { if (listening) stopListen(); }, 3000);
     }
-    requestAnimationFrame(check);
-  };
-  check();
+  } catch (_) { /* decode may fail on partial chunks; ignore */ }
+}
+function startVAD() {
+  vadActive = true;
+  hasSpoken = false;
 }
 function stopVAD() {
   vadActive = false;
@@ -221,7 +208,7 @@ async function startListen() {
   orb.classList.add("listening");
   micBtn.classList.add("hold");
   micBtn.textContent = "■ Stop";
-  try { mediaRecorder.start(); startVAD(); } catch (_) {}
+  try { mediaRecorder.start(250); startVAD(); } catch (_) {}
   // Hard cap: auto-stop after 15s no matter what (VAD fallback).
   clearTimeout(maxRecTimer);
   maxRecTimer = setTimeout(() => { if (listening) stopListen(); }, 15000);
