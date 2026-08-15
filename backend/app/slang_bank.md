@@ -17,3 +17,6 @@ dhakkan, ulloo, gadha, bandar, oonth, feku, chindi, saste, tatti, chomu, paltu
 
 ## 2026 Gen Z / Reels fresh (auto-discovered 2026-08-13, web search)
 cringe, bindaas, delulu, locked in, ate, drip, guap, simp, cheugy, ghanta (already had), sahi hai (already had), chill maar, jhakkas (already had), vella (already had), paltu (already had)
+
+## 2026 Gen Z / Hinglish fresh (auto-discovered 2026-08-16, web search — self-evo cron)
+rizz, sigma, skibidi, aura, sus, no cap, cap, based, slay, mid, bussin, sheesh, fire, goated, fr, ong, bet, W, L, ratio, stan, mood, valid, real, say less, lowkey, highkey, yapping, ick, baddie, caught in 4k, rent free, main character, touch grass, side eye, bhidu, chutiyapa, bakchodi, faltu, raita, dhansu, macha, gyaani, jugaadu, setting, khel, aafat, tamasha, dhamaal
