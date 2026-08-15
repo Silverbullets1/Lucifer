@@ -19,9 +19,11 @@ module.exports = async function handler(req, res) {
       res.status(upstream.status).json({ error: "tts_upstream_failed" });
       return;
     }
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    res.setHeader("Content-Type", "audio/mpeg");
+    // Trust the backend's sniffsed Content-Type (mp3 from Sarvam, wav from fallbacks).
+    const ct = upstream.headers.get("content-type") || "application/octet-stream";
+    res.setHeader("Content-Type", ct);
     res.setHeader("Cache-Control", "no-store");
+    const buf = Buffer.from(await upstream.arrayBuffer());
     res.status(200).send(buf);
   } catch (e) {
     res.status(502).json({ error: "tts_proxy_error", detail: String(e) });

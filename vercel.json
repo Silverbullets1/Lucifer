@@ -5,8 +5,13 @@
   "framework": null,
   "functions": {
     "api/voice.js": { "maxDuration": 60 },
-    "api/chat/**": { "maxDuration": 30 },
+    "api/chat/stream.js": { "maxDuration": 30 },
     "api/tts.js": { "maxDuration": 30 }
   },
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/api/chat/stream", "destination": "/api/chat/stream.js" },
+    { "source": "/api/voice", "destination": "/api/voice.js" },
+    { "source": "/api/tts", "destination": "/api/tts.js" },
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
 }
