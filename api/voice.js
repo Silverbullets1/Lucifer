@@ -14,6 +14,7 @@ module.exports = async function handler(req, res) {
       method: "POST",
       headers: { "Content-Type": req.headers["content-type"] || "multipart/form-data" },
       body: req, // Vercel passes the raw IncomingMessage stream
+      duplex: "half",
     });
     const txt = await upstream.text();
     res.setHeader("Content-Type", "application/json");
