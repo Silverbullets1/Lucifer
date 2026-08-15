@@ -1,10 +1,8 @@
 """Speech-to-Text for Lucifer voice assistant.
 
-STT strategy (per SAM, reinforced Aug 2026):
-  PRIMARY  : Nous whisper API (free, cloud — accurate multilingual Hinglish)
-  FALLBACK : local faster-whisper (offline if no internet/Nous token)
-
-Both produce plain Roman/Hindi text — no Arabic script leaks.
+STT priority chain (per SAM, reinforced Aug 2026):
+  1. Groq Whisper API (free tier, cloud, accurate)
+  2. Local faster-whisper small (offline fallback)
 """
 from __future__ import annotations
 import io, logging, os
@@ -14,49 +12,31 @@ log = logging.getLogger("lucifer.stt")
 _model = None
 _model_name = None
 
-def _resolve_nous_creds() -> tuple[str, str] | None:
-    """Try Nous JWT from auth.json or env; return (base_url, api_key) or None."""
+
+def _groq_whisper(audio_bytes: bytes, settings: Settings) -> str | None:
+    """Groq Whisper API — fast, accurate, free tier."""
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        return None
+    
+    import httpx
     try:
-        import json as _json
-        from pathlib import Path
-        auth_path = Path.home() / ".hermes" / "auth.json"
-        if auth_path.exists():
-            data = _json.loads(auth_path.read_text())
-            nous = data.get("providers", {}).get("nous", {}) or data.get("nous", {})
-            token = nous.get("access_token") or nous.get("token")
-            if token:
-                return "https://inference-api.nousresearch.com/v1", token
-    except Exception:
-        pass
-    # env fallback
-    base = os.environ.get("NOUS_BASE_URL", "https://inference-api.nousresearch.com/v1")
-    key = os.environ.get("NOUS_API_KEY") or os.environ.get("HERMES_NOUS_KEY")
-    if key:
-        return base, key
+        with httpx.Client(timeout=30) as client:
+            r = client.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {key}"},
+                files={"file": ("voice.wav", audio_bytes, "audio/wav")},
+                data={"model": "whisper-large-v3", "language": "hi"},
+            )
+            if r.status_code == 200:
+                text = r.json().get("text", "").strip()
+                log.info("STT (groq): %s", text[:60])
+                return text if text else None
+            log.warning("Groq STT HTTP %s: %s", r.status_code, r.text[:100])
+    except Exception as e:
+        log.warning("Groq STT failed: %s", e)
     return None
 
-def _nous_whisper(audio_bytes: bytes, settings: Settings) -> str:
-    """Cloud Whisper via Nous — primary STT."""
-    creds = _resolve_nous_creds()
-    if not creds:
-        raise RuntimeError("no Nous creds")
-    base, key = creds
-    import httpx
-    # faster-whisper WAV already produced by ffmpeg in caller; send directly
-    files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-    data = {"model": "whisper-1", "language": "hi"}
-    r = httpx.post(
-        f"{base}/audio/transcriptions",
-        headers={"Authorization": f"Bearer {key}"},
-        files=files,
-        data=data,
-        timeout=30,
-    )
-    r.raise_for_status()
-    import json as _json
-    text = r.json().get("text", "").strip()
-    log.info("STT (nous-cloud): %s", text)
-    return text
 
 def _get_model(settings: Settings):
     global _model, _model_name
@@ -68,17 +48,18 @@ def _get_model(settings: Settings):
         _model_name = want
     return _model
 
-def transcribe(audio_bytes: bytes, settings: Settings, session_id: str = "default") -> str:
-    """STT: try Nous cloud Whisper first, local fallback second."""
-    # 1) Try cloud Whisper via Nous (free, accurate, multilingual)
-    try:
-        return _nous_whisper(audio_bytes, settings)
-    except Exception as e:
-        log.warning("Nous cloud STT failed (%s); falling back to local whisper", e)
 
+def transcribe(audio_bytes: bytes, settings: Settings, session_id: str = "default") -> str:
+    """STT: Groq Whisper API first, local fallback."""
+    # 1) Groq Whisper API (cloud, accurate)
+    text = _groq_whisper(audio_bytes, settings)
+    if text:
+        return text
+    
     # 2) Local faster-whisper fallback
+    log.info("Groq unavailable, falling back to local whisper (%s)", settings.stt_model)
     model = _get_model(settings)
-    import tempfile, os, time, random
+    import tempfile, time, random
     suffix = f"_{session_id}_{int(time.time()*1000)}_{random.randint(1000,9999)}.wav"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
         f.write(audio_bytes)
@@ -86,7 +67,8 @@ def transcribe(audio_bytes: bytes, settings: Settings, session_id: str = "defaul
     try:
         segments, _ = model.transcribe(path, language="hi", beam_size=5)
         result = "".join(seg.text for seg in segments).strip()
-        log.info("STT (local): %s", result)
+        log.info("STT (local): %s", result[:60])
         return result
     finally:
+        import os
         os.unlink(path)
