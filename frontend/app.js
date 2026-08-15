@@ -162,9 +162,24 @@ async function startListen() {
     return;
   }
   try {
+    // Force-unlock audio context BEFORE requesting mic — mobile Chrome/iOS
+    // blocks getUserMedia if audio context is locked by autoplay policy.
+    if (typeof AudioContext !== "undefined" && !audioUnlocked) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
+        audioUnlocked = true;
+      } catch (_) {}
+    }
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    addLine("err", "Mic permission denied — allow mic and retry, or use TYPE.");
+    let msg = "Mic permission denied — allow mic and retry, or use TYPE.";
+    if (e.name === "NotAllowedError") msg = "🔇 Mic permission BLOCKED. Tap allow when browser asks, then retry.";
+    if (e.name === "NotFoundError") msg = "🎤 No microphone found on this device.";
+    if (e.name === "NotReadableError") msg = "⚠️ Mic in use by another app (close other tabs/apps).";
+    addLine("err", msg);
     return;
   }
   listening = true;
