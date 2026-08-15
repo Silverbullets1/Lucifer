@@ -29,7 +29,9 @@ def transcribe(audio_bytes: bytes, settings: Settings, session_id: str = "defaul
         f.write(audio_bytes)
         path = f.name
     try:
-        segments, _ = model.transcribe(path, language=None, beam_size=5)
-        return "".join(seg.text for seg in segments).strip()
+        segments, _ = model.transcribe(path, language="hi", beam_size=5)
+        result = "".join(seg.text for seg in segments).strip()
+        log.info("STT raw: %s", result)
+        return result
     finally:
         os.unlink(path)
