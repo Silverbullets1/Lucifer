@@ -1,12 +1,10 @@
 // LUCIFER — Frontend logic (cross-platform voice: Android / iOS / PC)
-// Talks to backend via Vercel serverless proxy at /api/* (HTTPS, VPS-direct).
-// /api/* -> Vercel function -> VPS:8000.
+// Backend via Vercel serverless proxy /api/* -> VPS:8000.
 //
-// VOICE INPUT STRATEGY (max compatibility):
-//   1) Web Speech API (SpeechRecognition) if available — best on Chrome/Edge.
-//   2) MediaRecorder fallback — records raw audio, sends to /voice (faster-whisper).
-//      Works on Firefox, Safari, iOS, any browser with getUserMedia.
-// VOICE OUTPUT: always Edge TTS (played via <audio>, works everywhere).
+// VOICE INPUT (priority order):
+//   1) Web Speech API (SpeechRecognition) — Chrome/Edge/Android Chrome (best, Hindi STT)
+//   2) MediaRecorder fallback — Firefox/Safari/iOS (raw audio -> /voice -> faster-whisper)
+// VOICE OUTPUT: always Edge TTS (<audio> playback, universal).
 
 const API_BASE = "/api";
 
@@ -16,16 +14,21 @@ const micBtn = $("micBtn"), textBtn = $("textBtn");
 const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn");
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
+const micEmoji = document.querySelector(".mic-emoji");
 
 let audioEl = new Audio();
 let recog = null, listening = false, busy = false;
 let mediaRecorder = null, mediaChunks = [], mediaStream = null;
 let usingFallback = false;
+let mode = "none"; // "speech" | "recorder" | "none"
 
 // ---------- status ----------
 function setStatus(state) {
   dot.className = "dot" + (state === "on" ? " on" : state === "busy" ? " busy" : "");
   statusText.textContent = state === "on" ? "online" : state === "busy" ? "thinking…" : "offline";
+}
+function setHint(msg) {
+  if (hint) hint.textContent = msg;
 }
 
 // ---------- waveform ----------
@@ -65,7 +68,7 @@ function addLine(who, text) {
   transcript.scrollTop = transcript.scrollHeight;
 }
 
-// ---------- backend calls ----------
+// ---------- backend: text chat ----------
 async function askLucifer(text) {
   if (!text || busy) return;
   busy = true; setStatus("busy"); orb.classList.add("speaking");
@@ -87,6 +90,7 @@ async function askLucifer(text) {
   }
 }
 
+// ---------- backend: TTS ----------
 async function speak(text) {
   try {
     const r = await fetch(API_BASE + "/tts", {
@@ -104,31 +108,30 @@ async function speak(text) {
   }
 }
 
-// ---------- VOICE INPUT: Web Speech API (primary) ----------
+// ---------- VOICE: Web Speech API (primary) ----------
 function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return false;
   try {
     recog = new SR();
-    recog.lang = "hi-IN"; // Hinglish — English words pass through
+    recog.lang = "hi-IN";
     recog.interimResults = false;
     recog.continuous = false;
     recog.onresult = (e) => {
       const txt = e.results[0][0].transcript.trim();
-      if (txt) askLucifer(txt);
+      if (txt) { mode = "speech"; askLucifer(txt); }
     };
     recog.onerror = (ev) => {
-      // no-speech / network / denied — fall through to stop; message shown by stopListen
       console.warn("SpeechRecognition error:", ev.error);
       if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
-        addLine("err", "Mic blocked. Allow mic permission in site settings, then retry.");
+        addLine("err", "Mic blocked by browser. Allow mic access in site settings, then retry.");
+        stopListen();
       }
-      stopListen();
+      // other errors (no-speech/network/aborted) -> let onend handle restart
     };
     recog.onend = () => {
-      // Auto-restart if user is still holding (no-speech timeout on some browsers)
-      if (listening && !busy && !usingFallback) {
-        try { recog.start(); } catch (_) {}
+      if (listening && !busy && mode === "speech") {
+        try { recog.start(); } catch (_) {} // auto-restart on no-speech
       } else {
         stopListen();
       }
@@ -139,95 +142,105 @@ function setupSpeech() {
   }
 }
 
-// ---------- VOICE INPUT: MediaRecorder fallback (Firefox / Safari / iOS) ----------
-async function setupFallback() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
-  if (typeof MediaRecorder === "undefined") return false;
-  return true;
+// ---------- VOICE: MediaRecorder fallback (Firefox/Safari/iOS) ----------
+function hasGetUserMedia() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 
 async function startFallback() {
+  if (!hasGetUserMedia() || typeof MediaRecorder === "undefined") {
+    addLine("err", "Mic not supported on this browser — use TYPE mode.");
+    stopListen();
+    return;
+  }
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
-               : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4"
-               : "";
+  } catch (e) {
+    addLine("err", "Mic permission denied. Allow mic, or use TYPE mode.");
+    stopListen();
+    return;
+  }
+  const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm"
+             : MediaRecorder.isTypeSupported("audio/mp4") ? "audio/mp4"
+             : "";
+  try {
     mediaRecorder = mime ? new MediaRecorder(mediaStream, { mimeType: mime })
                          : new MediaRecorder(mediaStream);
-    mediaChunks = [];
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size) mediaChunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      const blob = new Blob(mediaChunks, { type: mediaRecorder.mimeType || "audio/webm" });
-      stopListen();
-      // Send to backend /voice as multipart form (matches UploadFile field "audio")
-      const fd = new FormData();
-      fd.append("audio", blob, "voice.webm");
-      busy = true; setStatus("busy"); orb.classList.add("speaking");
-      addLine("you", "🎤 …");
-      try {
-        const r = await fetch(API_BASE + "/voice", {
-          method: "POST",
-          body: fd, // no Content-Type header — browser sets multipart boundary
-        });
-        if (!r.ok) throw new Error("voice failed");
-        const data = await r.json();
-        const text = data.text || "";
-        if (text.trim()) {
-          addLine("you", text);
-          const reply = data.reply || "";
-          if (reply) {
-            addLine("lu", reply.trim());
-            await speak(reply.trim());
-          }
-        } else {
-          addLine("err", "Couldn't hear clearly — try again.");
-        }
-      } catch (e) {
-        addLine("err", "Voice backend error — try TYPE mode.");
-      } finally {
-        busy = false; setStatus("on"); orb.classList.remove("speaking");
-        if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
-      }
-    };
-    mediaRecorder.start();
-    return true;
   } catch (e) {
-    console.warn("Fallback mic failed:", e);
-    addLine("err", "Mic access denied. Allow mic permission, or use TYPE.");
-    return false;
+    addLine("err", "Recorder init failed — use TYPE mode.");
+    mediaStream.getTracks().forEach((t) => t.stop());
+    stopListen();
+    return;
   }
+  mediaChunks = [];
+  let stopped = false;
+  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) mediaChunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    if (stopped) return;
+    stopped = true;
+    const blob = new Blob(mediaChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    const fd = new FormData();
+    fd.append("audio", blob, "voice.webm");
+    busy = true; setStatus("busy"); orb.classList.add("speaking");
+    addLine("you", "🎤 …");
+    try {
+      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      if (!r.ok) throw new Error("voice failed " + r.status);
+      const data = await r.json();
+      const text = data.text || "";
+      if (text.trim()) {
+        addLine("you", text);
+        const reply = data.reply || "";
+        if (reply) { addLine("lu", reply.trim()); await speak(reply.trim()); }
+      } else {
+        addLine("err", "Couldn't hear clearly — try again.");
+      }
+    } catch (e) {
+      addLine("err", "Voice backend error — try TYPE mode. (" + e.message + ")");
+    } finally {
+      busy = false; setStatus("on"); orb.classList.remove("speaking");
+      if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+    }
+  };
+  mediaRecorder.start();
 }
 
-// ---------- start / stop listening ----------
+// ---------- start / stop ----------
 function startListen() {
   if (busy) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
+  if (micEmoji) micEmoji.textContent = "🎙️";
+  // Prefer Web Speech if available
   if (recog && !usingFallback) {
-    try { recog.start(); return; } catch (_) {}
+    mode = "speech";
+    try { recog.start(); setHint("Listening… (speak now)"); return; }
+    catch (_) { /* fall through to recorder */ }
   }
-  // fallback path
+  // Fallback to MediaRecorder
   usingFallback = true;
+  mode = "recorder";
+  setHint("Recording… (tap again to stop)");
   startFallback();
 }
 
 function stopListen() {
   listening = false;
   usingFallback = false;
+  mode = "none";
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
+  if (micEmoji) micEmoji.textContent = "🎙️";
   try { if (recog) recog.stop(); } catch (_) {}
   try { if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop(); } catch (_) {}
 }
 
-// ---------- events (PC click + mobile tap) ----------
+// ---------- events ----------
 micBtn.addEventListener("click", () => {
   listening ? stopListen() : startListen();
 });
-
-// Hold-to-talk on touch devices (press = listen, release = stop)
-let holdTimer = null;
+// Mobile: tap-and-hold to talk
 micBtn.addEventListener("touchstart", (e) => {
   e.preventDefault();
   if (!listening) startListen();
@@ -252,16 +265,14 @@ textInput.addEventListener("keydown", (e) => {
 // ---------- boot ----------
 async function boot() {
   const hasSpeech = setupSpeech();
-  const hasFallback = await setupFallback();
-  if (!hasSpeech && !hasFallback) {
+  const hasRecorder = hasGetUserMedia() && typeof MediaRecorder !== "undefined";
+  if (!hasSpeech && !hasRecorder) {
     micBtn.title = "Mic not supported — use TYPE";
-    micBtn.disabled = true;
   } else if (!hasSpeech) {
-    micBtn.title = "Using recorder fallback (tap & hold to talk)";
+    micBtn.title = "Recorder mode (tap & hold to talk)";
   } else {
     micBtn.title = "Tap to talk (Hinglish / Hindi)";
   }
-  // health check
   fetch(API_BASE + "/health")
     .then((r) => r.json())
     .then(() => setStatus("on"))
