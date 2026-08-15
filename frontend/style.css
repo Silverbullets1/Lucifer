@@ -114,5 +114,26 @@ body{
 }
 .foot{display:flex;justify-content:center;gap:8px;font-size:11px;color:var(--dim);padding-top:6px}
 .foot .sep{opacity:.5}
+.dev-credit{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:clamp(11px,2.4vw,13px);font-weight:600;
+  color:var(--dim);font-family:'Orbitron',sans-serif;
+  letter-spacing:1px;
+}
+.dev-credit .credit-link{
+  color:#00e5ff;            /* cyan brand color */
+  text-decoration:none;
+  background:linear-gradient(90deg,#00e5ff,#ff2d55);
+  -webkit-background-clip:text;
+  background-clip:text;
+  -webkit-text-fill-color:transparent;
+  box-shadow:0 0 12px rgba(0,229,255,.6);
+  transition:.3s;
+}
+.dev-credit .credit-link:hover{
+  box-shadow:0 0 22px rgba(0,229,255,1),0 0 30px rgba(255,45,85,.7);
+  transform:translateY(-1px);
+}
+.dev-credit .credit-link:focus-visible{outline:2px solid #00e5ff;outline-offset:2px;border-radius:3px}
 [hidden]{display:none!important}
 @media(max-width:380px){.btn{padding:10px 16px}}
