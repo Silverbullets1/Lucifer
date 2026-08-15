@@ -26,7 +26,7 @@ def _groq_whisper(audio_bytes: bytes, settings: Settings) -> str | None:
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {key}"},
                 files={"file": ("voice.wav", audio_bytes, "audio/wav")},
-                data={"model": "whisper-large-v3", "language": "en"},
+                data={"model": "whisper-large-v3", "language": "hi"},
             )
             if r.status_code == 200:
                 text = r.json().get("text", "").strip()
