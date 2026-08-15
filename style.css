@@ -56,7 +56,7 @@ body{
 .stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px}
 .orb{
   position:relative;width:min(64vw,260px);height:min(64vw,260px);
-  display:grid;place-items:center;
+  display:grid;place-items:center;cursor:pointer;
 }
 #wave{position:absolute;inset:0;width:100%;height:100%}
 .orb-core{

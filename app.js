@@ -13,7 +13,7 @@ const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn")
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 
-let hasSpeech = false, listening = false, busy = false;
+let listening = false, busy = false;
 
 // ---------- status ----------
 function setStatus(state) {
@@ -103,23 +103,34 @@ async function speak(text) {
   }
 }
 
-// ---------- voice input (mic -> backend Whisper via Nous) ----------
+// ---------- voice input (mic -> backend Whisper via Nous) with VAD ----------
 let mediaRecorder = null, audioChunks = [], micStream = null, micReady = false;
+let audioCtx = null, analyser = null, silenceTimer = null, vadActive = false, hasSpoken = false;
 
 async function ensureMic() {
-  // Lazily init mic on first user gesture (browsers block pre-gesture getUserMedia).
   if (micReady) return true;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
     return false;
   }
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(micStream);
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 16000 }
+    });
+    // Set up VAD (voice activity detection) via Web Audio AnalyserNode
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(micStream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.4;
+    src.connect(analyser);
+
+    mediaRecorder = new MediaRecorder(micStream, { mimeType: pickMime() });
     mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = async () => {
+      stopVAD();
       const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
       audioChunks = [];
-      await sendVoice(blob);
+      if (blob.size > 1000) await sendVoice(blob);
     };
     micReady = true;
     return true;
@@ -127,6 +138,41 @@ async function ensureMic() {
     console.warn("mic permission denied", e);
     return false;
   }
+}
+
+function pickMime() {
+  const cands = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  for (const c of cands) if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
+  return "";
+}
+
+function startVAD() {
+  vadActive = true;
+  hasSpoken = false;
+  const buf = new Uint8Array(analyser.fftSize);
+  const check = () => {
+    if (!vadActive) return;
+    analyser.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+    const rms = Math.sqrt(sum / buf.length);
+    if (rms >= 0.02) {
+      // speech detected
+      hasSpoken = true;
+      clearTimeout(silenceTimer); silenceTimer = null;
+    } else if (hasSpoken) {
+      // silence AFTER speech -> start 3s auto-stop countdown
+      if (!silenceTimer) {
+        silenceTimer = setTimeout(() => { if (listening) stopListen(); }, 3000);
+      }
+    }
+    requestAnimationFrame(check);
+  };
+  check();
+}
+function stopVAD() {
+  vadActive = false;
+  clearTimeout(silenceTimer); silenceTimer = null;
 }
 
 async function sendVoice(blob) {
@@ -162,15 +208,12 @@ async function startListen() {
   orb.classList.add("listening");
   micBtn.classList.add("hold");
   micBtn.textContent = "■ Stop";
-  try { mediaRecorder.start(); } catch (_) {}
-  // Auto-stop after 12s so a single click still produces audio.
-  clearTimeout(startListen._t);
-  startListen._t = setTimeout(() => { if (listening) stopListen(); }, 12000);
+  try { mediaRecorder.start(); startVAD(); } catch (_) {}
 }
 function stopListen() {
   if (!mediaRecorder || !listening) return;
   listening = false;
-  clearTimeout(startListen._t);
+  stopVAD();
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
   micBtn.textContent = "🎤 Talk";
@@ -178,9 +221,9 @@ function stopListen() {
 }
 
 // ---------- events ----------
-micBtn.addEventListener("click", () => {
-  listening ? stopListen() : startListen();
-});
+function toggleMic() { listening ? stopListen() : startListen(); }
+orb.addEventListener("click", toggleMic);
+micBtn.addEventListener("click", toggleMic);
 textBtn.addEventListener("click", () => {
   typebox.hidden = !typebox.hidden;
   if (!typebox.hidden) textInput.focus();
