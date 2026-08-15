@@ -286,8 +286,8 @@ function stopListen() {
 // Continuous voice mode (ChatGPT/Gemini style):
 //   TAP ONCE → start listening → speak → auto-send on silence → reply → auto-resume
 //   TAP AGAIN → end conversation (stop listening + stop reply audio)
-orb.addEventListener("pointerup", (e) => {
-  e.preventDefault();
+// Using pointerdown (not pointerup) so first tap itself activates
+orb.addEventListener("pointerdown", (e) => {
   unlockAudio();
   if (busy) return;
   if (listening || conversationOn) {
