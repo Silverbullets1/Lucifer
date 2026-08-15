@@ -189,9 +189,30 @@ async def voice(audio: UploadFile = File(...)):
     data = await audio.read()
     if not data:
         raise HTTPException(400, "empty audio")
+    # Convert ANY uploaded audio (webm/mp4/ogg/wav) to 16k mono wav via ffmpeg
+    # so faster-whisper always gets a decodable file (browser MediaRecorder
+    # emits webm/opus which PyAV sometimes fails to read raw).
+    import subprocess, tempfile, shutil
+    with tempfile.NamedTemporaryFile(suffix=".in", delete=False) as fin:
+        fin.write(data); in_path = fin.name
+    out_path = in_path + ".wav"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", in_path, "-ar", "16000", "-ac", "1", out_path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+        )
+        with open(out_path, "rb") as f:
+            wav_bytes = f.read()
+        if not wav_bytes:
+            raise RuntimeError("ffmpeg produced empty output")
+    except Exception as e:
+        log.warning("ffmpeg convert failed (%s); using raw bytes", e)
+        wav_bytes = data  # fall back to original
+    finally:
+        shutil.rmtree(os.path.dirname(in_path), ignore_errors=True)
     # 1) STT
     try:
-        text = transcribe(data, settings)
+        text = transcribe(wav_bytes, settings)
     except Exception as e:
         log.exception("stt failed")
         raise HTTPException(500, f"stt: {e}")
