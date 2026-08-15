@@ -73,12 +73,33 @@ async function askLucifer(text) {
     const reply = (await r.text()).trim();
     if (!reply) throw new Error("empty reply");
     addLine("lu", reply);
-    // TTS is handled entirely on the backend (synthesis + playback via /tts).
-    // Frontend only displays the text reply.
+    // Voice playback: backend synthesizes (Sarvam shubh + Edge fallback),
+    // frontend just fetches the mp3 and plays it. TTS logic stays backend-side.
+    await speak(reply);
   } catch (e) {
     addLine("err", "Connection error — backend down?");
   } finally {
     busy = false; setStatus("on"); orb.classList.remove("speaking");
+  }
+}
+
+async function speak(text) {
+  try {
+    const r = await fetch(API_BASE + "/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) throw new Error("tts failed " + r.status);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const el = new Audio();
+    el.src = url;
+    el.type = "audio/mpeg";
+    el.onended = () => URL.revokeObjectURL(url);
+    await el.play().catch(() => {});
+  } catch (e) {
+    console.warn("TTS playback skipped:", e);
   }
 }
 
