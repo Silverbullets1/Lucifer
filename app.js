@@ -115,18 +115,21 @@ async function ensureMic() {
   }
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 16000 }
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
     });
+    // Match AudioContext sampleRate to the mic track so the AnalyserNode
+    // actually receives data (mismatched rates = silent analyser = VAD dead).
+    let sr = 16000;
+    try { sr = micStream.getAudioTracks()[0].getSettings().sampleRate || 16000; } catch (_) {}
     // Set up VAD (voice activity detection) via Web Audio AnalyserNode
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sr });
     if (audioCtx.state === "suspended") await audioCtx.resume();
     const src = audioCtx.createMediaStreamSource(micStream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.4;
-    // Connect analyser -> a zero-gain node -> destination so the analyser
-    // actually receives data (some browsers won't feed it otherwise).
-    // Gain 0 means NO audible echo, but the graph stays "pulling" data.
+    // Connect analyser -> zero-gain node -> destination so the analyser
+    // receives data (some browsers won't feed it otherwise). Gain 0 = no echo.
     const silent = audioCtx.createGain();
     silent.gain.value = 0;
     src.connect(analyser);
