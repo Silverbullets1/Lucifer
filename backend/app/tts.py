@@ -1,11 +1,11 @@
 """
 Text-to-Speech for Lucifer — Voice Assistant backend.
 
-VOICE POLICY (per SAM): ONLY Hindi, spoken by a natural Indian female voice.
-  - Primary: Microsoft Edge TTS 'hi-IN-SwaraNeural' (free, no API key).
-    Plain, natural Hindi speech — the most human-sounding free option.
-  - Fallback 1: gTTS Hindi (Google, free, natural) — if Edge fails.
-  - Fallback 2: Kokoro Hindi (offline) — last resort if both cloud TTS fail.
+VOICE POLICY (per SAM): Hinglish/Hindi, spoken by Edge TTS 'en-IN-PrabhatNeural'
+(Indian MALE, natural Hinglish accent — no USA accent).
+  - Primary: Microsoft Edge TTS 'en-IN-PrabhatNeural' (free, no API key).
+  - Fallback 1: gTTS English (Google, free) — if Edge fails.
+  - Fallback 2: Kokoro English-India (offline) — last resort if both cloud TTS fail.
 
 synthesize() is async because the FastAPI event loop is already running,
 so we must `await` edge_tts rather than asyncio.run().
@@ -102,11 +102,11 @@ def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
 
 
 async def synthesize(text: str, settings: Settings) -> bytes:
-    """Speak text with Swara (hi-IN) — plain natural Hindi, no emotion shaping.
+    """Speak text with Prabhat (en-IN-PrabhatNeural) — natural Hinglish male voice.
 
-    Fallback chain: Edge Swara (natural)
-                    -> gTTS Hindi (natural)
-                    -> Kokoro Hindi (offline, last resort).
+    Fallback chain: Edge Prabhat (natural)
+                    -> gTTS English (natural)
+                    -> Kokoro English-India (offline, last resort).
     """
     if not text.strip():
         return b""

@@ -1,12 +1,10 @@
 """
 LUCIFER — Voice Assistant Backend
 FastAPI server that wires the 3-layer voice pipeline:
-  Mic audio (from Flutter app) -> STT (faster-whisper)
-                          -> LLM (tencent/hy3:free via Nous, + Lucifer persona)
-                          -> TTS (Kokoro) -> audio back to app
-Cross-platform: same backend serves Windows + Android Flutter clients.
-
-BRAIN = tencent/hy3:free (Nous Portal). No Ollama. Free, reasoning model.
+  Mic audio (from web frontend / browser SpeechRecognition) -> STT (faster-whisper, auto-detect lang)
+                          -> LLM (upstage/solar-pro4:free via Nous, + Lucifer persona)
+                          -> TTS (Edge PrabhatNeural) -> audio back to app
+BRAIN = upstage/solar-pro4:free (Nous Portal). No Ollama. Free, Hindi-native.
 """
 from __future__ import annotations
 import os, io, logging, asyncio, tempfile, base64
@@ -139,7 +137,7 @@ async def root():
     .sub{color:#7b2dff;margin-top:1rem}.tag{color:#00e5ff}</style></head>
     <body><div class="box"><div class="glow">🔥 LUCIFER</div>
     <div class="sub">Voice Assistant backend is <span class="tag">ONLINE</span></div>
-    <div class="sub">Brain: tencent/hy3:free · TTS: Kokoro (male)</div></div></body></html>
+    <div class="sub">Brain: upstage/solar-pro4:free · TTS: Edge PrabhatNeural (male)</div></div></body></html>
     """
 
 

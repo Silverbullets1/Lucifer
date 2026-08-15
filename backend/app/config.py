@@ -17,9 +17,9 @@ class Settings(BaseModel):
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
     stt_model: str = Field(default=os.getenv("STT_MODEL", "base"))    # tiny|base|small
-    # TTS VOICE POLICY (per SAM): ONLY Hindi/Hinglish via Arjun (Edge TTS).
+    # TTS VOICE POLICY (per SAM): Hinglish/Hindi via en-IN-PrabhatNeural (Edge TTS, male).
     # No English/USA-accent voice anywhere. tts_voice_hi kept only as offline
-    # fallback (Kokoro Hindi) if Edge TTS fails.
+    # fallback (Kokoro English-India) if Edge TTS fails.
     tts_voice_hi: str = Field(default=os.getenv("TTS_VOICE_HI", "hm_psi"))
     # CORS (allow Flutter dev + Vercel frontend + local clients)
     cors_origins: list[str] = Field(default_factory=lambda: [

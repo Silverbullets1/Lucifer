@@ -23,7 +23,7 @@ def transcribe(audio_bytes: bytes, settings: Settings) -> str:
         f.write(audio_bytes)
         path = f.name
     try:
-        segments, _ = model.transcribe(path, language="en", beam_size=5)
+        segments, _ = model.transcribe(path, language=None, beam_size=5)
         return "".join(seg.text for seg in segments).strip()
     finally:
         os.unlink(path)

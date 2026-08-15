@@ -1,10 +1,9 @@
 """
-Lucifer BRAIN — calls tencent/hy3:free (Nous Portal) directly.
+Lucifer BRAIN — calls upstage/solar-pro4:free (Nous Portal) directly.
 No Ollama. Uses the same Nous inference JWT the Hermes gateway already
 holds in ~/.hermes/auth.json, so it's free and needs no extra key.
 
-tencent/hy3:free is a *reasoning* model: it streams a `reasoning` field
-then the actual `content`. We read both; the assistant reply is `content`.
+upstage/solar-pro4:free is a fast, Hindi-native chat model ideal for voice.
 """
 from __future__ import annotations
 import json, logging, os, sys
