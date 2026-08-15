@@ -310,15 +310,13 @@ orb.addEventListener("click", toggleOrb);
 orb.addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleOrb(); }
 });
-// Mobile: hold to talk
-orb.addEventListener("touchstart", (e) => {
-  e.preventDefault();
-  if (!listening) startListen();
-}, { passive: false });
-orb.addEventListener("touchend", (e) => {
-  e.preventDefault();
-  if (listening) stopListen();
-}, { passive: false });
+// Mobile: TAP to toggle (one tap = start listening, tap again = stop).
+// We intentionally do NOT use touchstart/touchend hold-to-talk, because on
+// Android Chrome a single tap fires both touchstart AND touchend, which would
+// start then immediately stop the mic (forcing the user to hold). Relying on
+// the click event gives one-tap toggle on both desktop and mobile.
+orb.addEventListener("touchstart", (e) => { e.preventDefault(); }, { passive: false });
+orb.addEventListener("click", toggleOrb);
 
 // ---------- text mode ----------
 textBtn.addEventListener("click", () => {
