@@ -217,25 +217,29 @@ async def voice(audio: UploadFile = File(...), sid: str = "default"):
     data = await audio.read()
     if not data:
         raise HTTPException(400, "empty audio")
-    # Convert ANY uploaded audio (webm/mp4/ogg/wav) to 16k mono wav via ffmpeg
-    # so faster-whisper always gets a decodable file (browser MediaRecorder
-    # emits webm/opus which PyAV sometimes fails to read raw).
+    # Convert ANY uploaded audio (webm/mp4/ogg/mp3/wav) to 16k mono WAV via
+    # ffmpeg so faster-whisper always gets a cleanly-decodable file. Browser
+    # MediaRecorder emits webm/opus; test feeds may include mp3 from /tts.
     import subprocess, tempfile, shutil
     with tempfile.NamedTemporaryFile(suffix=".in", delete=False) as fin:
         fin.write(data); in_path = fin.name
     out_path = in_path + ".wav"
     try:
         subprocess.run(
-            ["ffmpeg", "-y", "-i", in_path, "-ar", "16000", "-ac", "1", out_path],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+            ["ffmpeg", "-y", "-i", in_path, "-vn", "-ar", "16000", "-ac", "1",
+             "-c:a", "pcm_s16le", out_path],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30,
         )
         with open(out_path, "rb") as f:
             wav_bytes = f.read()
-        if not wav_bytes:
-            raise RuntimeError("ffmpeg produced empty output")
+        if not wav_bytes or len(wav_bytes) < 100:
+            raise RuntimeError("ffmpeg produced empty or too-small output")
     except Exception as e:
-        log.warning("ffmpeg convert failed (%s); using raw bytes", e)
-        wav_bytes = data  # fall back to original
+        # Do NOT fall back to raw bytes — MP3/webm raw bytes fed to faster-whisper
+        # produce garbage transcriptions. Surface the real failure instead.
+        log.error("ffmpeg convert failed: stderr=%s; input_size=%d",
+                  getattr(e, "stderr", b"")[:200], len(data))
+        raise HTTPException(500, "audio conversion failed — send a real mic recording")
     finally:
         shutil.rmtree(os.path.dirname(in_path), ignore_errors=True)
     # 1) STT — pass sid for unique temp filename (avoids cross-request temp race)
