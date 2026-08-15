@@ -26,22 +26,19 @@
     </header>
 
     <section class="stage">
-      <div class="orb" id="orb">
+      <!-- ORB IS THE MIC: tap/hold to talk, real-time conversation -->
+      <div class="orb" id="orb" role="button" tabindex="0" title="Tap & hold to talk">
         <canvas id="wave"></canvas>
         <div class="orb-core" id="orbCore">
           <span class="mic-emoji">🎙️</span>
         </div>
       </div>
       <div class="transcript" id="transcript">
-        <p class="hint" id="hint">Tap the orb and speak — Lucifer is listening…</p>
+        <p class="hint" id="hint">Tap the orb and speak — Lucifer listens in real-time…</p>
       </div>
     </section>
 
     <section class="controls">
-      <button class="btn mic" id="micBtn" title="Hold to talk">
-        <span class="ic">🎤</span>
-        <span class="lbl">TALK</span>
-      </button>
       <button class="btn text" id="textBtn" title="Type instead">
         <span class="ic">⌨️</span>
         <span class="lbl">TYPE</span>

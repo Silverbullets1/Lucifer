@@ -1,23 +1,24 @@
-// LUCIFER — Frontend logic (cross-platform voice: Android / iOS / PC)
+// LUCIFER — Frontend logic (orb = mic, real-time conversation)
 // Backend via Vercel serverless proxy /api/* -> VPS:8000.
 //
-// VOICE INPUT (priority order):
-//   1) Web Speech API (SpeechRecognition) — Chrome/Edge/Android Chrome (best, Hindi STT)
-//   2) MediaRecorder fallback — Firefox/Safari/iOS (raw audio -> /voice -> faster-whisper)
-// VOICE OUTPUT: always Edge TTS (<audio> playback, universal).
+// UX (like ChatGPT/Gemini voice): TAP/HOLD the ORB to talk.
+//   - Web Speech API (hi-IN) on Chrome/Edge/Android (best, instant)
+//   - MediaRecorder fallback on Firefox/Safari/iOS (audio -> /voice -> STT)
+// After Lucifer replies, it stays ready — tap orb again to continue.
+// Output voice: Edge TTS (en-IN-PrabhatNeural) played via <audio>.
 
 const API_BASE = "/api";
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
-const micBtn = $("micBtn"), textBtn = $("textBtn");
+const textBtn = $("textBtn");
 const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn");
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 const micEmoji = document.querySelector(".mic-emoji");
 
 let audioEl = new Audio();
-let recog = null, listening = false, busy = false;
+let recog = null, listening = false, busy = false, conversationOn = false;
 let mediaRecorder = null, mediaChunks = [], mediaStream = null;
 let usingFallback = false;
 let mode = "none"; // "speech" | "recorder" | "none"
@@ -127,11 +128,10 @@ function setupSpeech() {
         addLine("err", "Mic blocked by browser. Allow mic access in site settings, then retry.");
         stopListen();
       }
-      // other errors (no-speech/network/aborted) -> let onend handle restart
     };
     recog.onend = () => {
       if (listening && !busy && mode === "speech") {
-        try { recog.start(); } catch (_) {} // auto-restart on no-speech
+        try { recog.start(); } catch (_) {}
       } else {
         stopListen();
       }
@@ -179,6 +179,12 @@ async function startFallback() {
     if (stopped) return;
     stopped = true;
     const blob = new Blob(mediaChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    if (blob.size < 500) { // too short / silence
+      addLine("err", "Couldn't hear clearly — try again.");
+      if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
+      busy = false; setStatus("on"); orb.classList.remove("speaking");
+      return;
+    }
     const fd = new FormData();
     fd.append("audio", blob, "voice.webm");
     busy = true; setStatus("busy"); orb.classList.add("speaking");
@@ -205,23 +211,21 @@ async function startFallback() {
   mediaRecorder.start();
 }
 
-// ---------- start / stop ----------
+// ---------- start / stop (orb tap = toggle) ----------
 function startListen() {
   if (busy) return;
   listening = true;
+  conversationOn = true;
   orb.classList.add("listening");
-  micBtn.classList.add("hold");
   if (micEmoji) micEmoji.textContent = "🎙️";
-  // Prefer Web Speech if available
   if (recog && !usingFallback) {
     mode = "speech";
-    try { recog.start(); setHint("Listening… (speak now)"); return; }
-    catch (_) { /* fall through to recorder */ }
+    try { recog.start(); setHint("Listening… speak now"); return; }
+    catch (_) {}
   }
-  // Fallback to MediaRecorder
   usingFallback = true;
   mode = "recorder";
-  setHint("Recording… (tap again to stop)");
+  setHint("Recording… tap orb again to stop");
   startFallback();
 }
 
@@ -230,26 +234,30 @@ function stopListen() {
   usingFallback = false;
   mode = "none";
   orb.classList.remove("listening");
-  micBtn.classList.remove("hold");
   if (micEmoji) micEmoji.textContent = "🎙️";
   try { if (recog) recog.stop(); } catch (_) {}
   try { if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop(); } catch (_) {}
 }
 
-// ---------- events ----------
-micBtn.addEventListener("click", () => {
+// ---------- orb = mic button ----------
+function toggleOrb() {
   listening ? stopListen() : startListen();
+}
+orb.addEventListener("click", toggleOrb);
+orb.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleOrb(); }
 });
-// Mobile: tap-and-hold to talk
-micBtn.addEventListener("touchstart", (e) => {
+// Mobile: hold to talk
+orb.addEventListener("touchstart", (e) => {
   e.preventDefault();
   if (!listening) startListen();
 }, { passive: false });
-micBtn.addEventListener("touchend", (e) => {
+orb.addEventListener("touchend", (e) => {
   e.preventDefault();
   if (listening) stopListen();
 }, { passive: false });
 
+// ---------- text mode ----------
 textBtn.addEventListener("click", () => {
   typebox.hidden = !typebox.hidden;
   if (!typebox.hidden) textInput.focus();
@@ -267,11 +275,11 @@ async function boot() {
   const hasSpeech = setupSpeech();
   const hasRecorder = hasGetUserMedia() && typeof MediaRecorder !== "undefined";
   if (!hasSpeech && !hasRecorder) {
-    micBtn.title = "Mic not supported — use TYPE";
+    orb.title = "Mic not supported — use TYPE";
   } else if (!hasSpeech) {
-    micBtn.title = "Recorder mode (tap & hold to talk)";
+    orb.title = "Tap & hold orb to talk (recorder mode)";
   } else {
-    micBtn.title = "Tap to talk (Hinglish / Hindi)";
+    orb.title = "Tap orb to talk (Hinglish / Hindi)";
   }
   fetch(API_BASE + "/health")
     .then((r) => r.json())
