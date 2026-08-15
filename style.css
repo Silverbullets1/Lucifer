@@ -59,7 +59,7 @@ body{
   display:grid;place-items:center;cursor:pointer;
   touch-action:manipulation;-webkit-tap-highlight-color:transparent;outline:none;
 }
-#wave{position:absolute;inset:0;width:100%;height:100%}
+#wave{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .orb-core{
   width:62%;height:62%;border-radius:50%;
   display:grid;place-items:center;
