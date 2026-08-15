@@ -1,135 +1,125 @@
 """
-Lucifer TTS — backend-side speech synthesis.
+Text-to-Speech for Lucifer — Voice Assistant backend.
 
-Voice policy (per SAM): ONLY Hindi/Hinglish.
-  Primary : Sarvam Bulbul V3  -> shubh (Indian MALE, native Hinglish, hi-IN)
-  Fallback : Edge TTS Prabhat  -> en-IN-PrabhatNeural (Indian MALE, keyless)
-  Last-resort: Kokoro offline  -> hi-IN (if both cloud TTS fail)
+VOICE POLICY (per SAM): ONLY Hindi, spoken by a natural Indian female voice.
+  - Primary: Microsoft Edge TTS 'hi-IN-SwaraNeural' (free, no API key).
+    Plain, natural Hindi speech — the most human-sounding free option.
+  - Fallback 1: gTTS Hindi (Google, free, natural) — if Edge fails.
+  - Fallback 2: Kokoro Hindi (offline) — last resort if both cloud TTS fail.
 
-All synthesis happens on the backend; the frontend just plays the returned mp3.
+synthesize() is async because the FastAPI event loop is already running,
+so we must `await` edge_tts rather than asyncio.run().
 """
-
 from __future__ import annotations
+
 import io
-import os
-import time
-from typing import Optional
+import logging
+import re
+import asyncio
 
-import httpx
-import edge_tts
-from pydantic import BaseModel
+from .config import Settings
 
-from .config import settings
+log = logging.getLogger("lucifer.tts")
 
-# --------------------------------------------------------------------------- #
-# Sarvam (primary)
-# --------------------------------------------------------------------------- #
-_SARVAM_URL = "https://api.sarvam.ai/text-to-speech"
+# Microsoft Edge TTS voice for Hinglish (free, no API key)
+# en-IN-PrabhatNeural = Indian MALE, natural Hinglish (Roman) accent — no USA accent
+EDGE_HI_VOICE = "en-IN-PrabhatNeural"
+
+# URLs / links — Edge reads these as awkward letter soup ("h t t p ...").
+# We strip them from the SPOKEN text only (the on-screen reply keeps them).
+# Covers http://, https://, AND malformed forms like https:www or http:site
+# (no slashes). \S+ stops at the next whitespace so we don't over-eat the reply.
+_URL_RE = re.compile(r"https?://\S+|https?:\S+|www\.\S+", re.IGNORECASE)
 
 
-async def _sarvam_tts(text: str, speaker: str, api_key: str) -> Optional[bytes]:
-    """Call Sarvam Bulbul V3. Returns wav bytes or None on failure."""
-    payload = {
-        "text": text,
-        "target_language_code": "hi-IN",
-        "speaker": speaker,
-        "model": "bulbul:v3",
-        "output_audio_codec": "mp3",
-        "pace": 1.0,
-        "speech_sample_rate": 24000,
-        "enable_preprocessing": True,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post(
-                _SARVAM_URL,
-                headers={
-                    "api-subscription-key": api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+def _strip_urls(text: str) -> str:
+    """Replace spoken URLs with the word 'link' so TTS doesn't read letter soup.
+    Use English 'link' (not Hindi 'लिंक') so the Hinglish male voice reads it cleanly."""
+    return _URL_RE.sub(" link ", text)
+
+
+async def _edge_tts(text: str, voice: str, retries: int = 3) -> bytes:
+    import edge_tts
+
+    # Native prosody params (edge_tts supports rate/volume/pitch directly —
+    # wrapping in SSML made Edge read the tags aloud as text, a bug).
+    # rate="fast" + louder + higher pitch = punchy Devil vibe.
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            communicate = edge_tts.Communicate(
+                text,
+                voice,
+                rate="+15%",
+                volume="+20%",
+                pitch="-6Hz",
             )
-            if r.status_code == 200:
-                j = r.json()
-                import base64
-                b64 = j.get("audios", [None])[0] or j.get("audio")
-                if b64:
-                    return base64.b64decode(b64)
-            else:
-                print(f"[TTS] Sarvam {r.status_code}: {r.text[:120]}")
-    except Exception as e:
-        print(f"[TTS] Sarvam error: {e}")
-    return None
+            buf = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    buf.write(chunk["data"])
+            data = buf.getvalue()
+            if data:
+                return data
+            last_err = RuntimeError("empty audio from Edge")
+        except Exception as e:  # noqa: BLE001 - we retry regardless of type
+            last_err = e
+            log.warning("Edge TTS attempt %d/%d failed: %s", attempt, retries, e)
+    raise last_err or RuntimeError("edge_tts failed")
 
 
-# --------------------------------------------------------------------------- #
-# Edge TTS (fallback, keyless)
-# --------------------------------------------------------------------------- #
-async def _edge_tts(text: str, voice: str) -> Optional[bytes]:
-    try:
-        comm = edge_tts.Communicate(text, voice)
-        chunks = []
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                chunks.append(chunk["data"])
-        if chunks:
-            # Edge returns mp3; convert to wav via ffmpeg if present, else return mp3
-            data = b"".join(chunks)
-            try:
-                import subprocess, tempfile, os as _os
-                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                    f.write(data); mp3 = f.name
-                wav = mp3[:-4] + ".wav"
-                subprocess.run(["ffmpeg", "-y", "-i", mp3, wav, "-ar", "24000", "-ac", "1"],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
-                if _os.path.exists(wav):
-                    with open(wav, "rb") as fh: out = fh.read()
-                    _os.unlink(mp3); _os.unlink(wav)
-                    return out
-            except Exception:
-                pass
-            return data
-    except Exception as e:
-        print(f"[TTS] Edge error: {e}")
-    return None
+def _gtts_hindi_fallback(text: str) -> bytes:
+    """Free Google TTS — for Hinglish we use English (en) so it doesn't read
+    Roman Hindi with a USA accent. Natural enough as a fallback."""
+    from gtts import gTTS
+
+    buf = io.BytesIO()
+    gTTS(text=text, lang="en", slow=False).write_to_fp(buf)
+    return buf.getvalue()
 
 
-# --------------------------------------------------------------------------- #
-# Public API
-# --------------------------------------------------------------------------- #
-async def synthesize(text: str, settings_obj=None) -> bytes:
-    """Synthesize `text` to wav bytes using the voice policy above."""
-    s = settings_obj or settings
-    text = (text or "").strip()
-    if not text:
+def _kokoro_hindi_fallback(text: str, settings: Settings) -> bytes:
+    """Offline Kokoro English-India (en IN) — last resort for Hinglish text.
+
+    Produces a raw float waveform; we wrap it as 16-bit PCM WAV.
+    """
+    import numpy as np
+    import soundfile as sf  # Kokoro returns audio; we re-encode to WAV
+
+    from kokoro import KPipeline
+
+    pipe = KPipeline(lang_code="e")  # 'e' = English (kokoro has no hi/IN; en is closest)
+    audio_segments = []
+    generator = pipe(text, voice="en_IN_001", speed=1.0)
+    for _i, (gs, ps, audio) in enumerate(generator):
+        audio_segments.append(audio)
+    if not audio_segments:
+        raise RuntimeError("Kokoro produced no audio")
+    audio = np.concatenate(audio_segments)
+    buf = io.BytesIO()
+    sf.write(buf, audio, 24000, format="WAV")
+    return buf.getvalue()
+
+
+async def synthesize(text: str, settings: Settings) -> bytes:
+    """Speak text with Swara (hi-IN) — plain natural Hindi, no emotion shaping.
+
+    Fallback chain: Edge Swara (natural)
+                    -> gTTS Hindi (natural)
+                    -> Kokoro Hindi (offline, last resort).
+    """
+    if not text.strip():
         return b""
-
-    # 1) Sarvam primary
-    if s.sarvam_api_key:
-        wav = await _sarvam_tts(text, s.sarvam_speaker, s.sarvam_api_key)
-        if wav:
-            return wav
-
-    # 2) Edge TTS fallback (keyless, native Hindi)
-    edge = await _edge_tts(text, s.edge_hi_voice)
-    if edge:
-        return edge
-
-    # 3) Nothing worked -> silent mp3
-    print("[TTS] Both cloud TTS failed; returning silent audio.")
-    return _silent_mp3()
-
-
-def _silent_mp3() -> bytes:
-    # 1-frame silent MPEG-1 Layer III (24000Hz, 1ch, 32kbps) — minimal valid mp3
-    return bytes.fromhex(
-        "fffb900000000000000000000000000000000000000000000000000000000000"
-        "0000fffba040000000000000000000000000000000000000000000000000000000"
-        "0000fffba040000000000000000000000000000000000000000000000000000000"
-        "0000fffba040000000000000000000000000000000000000000000000000000000"
-    )
-
-
-class TTSReq(BaseModel):
-    text: str
-    speaker: Optional[str] = None
+    clean = _strip_urls(text.strip())
+    # If the cleaned text became empty (e.g. only a URL), say a gentle filler.
+    if not clean.strip():
+        clean = "लिंक मिला"
+    try:
+        return await _edge_tts(clean, EDGE_HI_VOICE)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Edge TTS failed (%s); trying gTTS Hindi", e)
+        try:
+            return await asyncio.to_thread(_gtts_hindi_fallback, clean)
+        except Exception as e2:  # noqa: BLE001
+            log.warning("gTTS failed (%s); falling back to Kokoro Hindi", e2)
+            return await asyncio.to_thread(_kokoro_hindi_fallback, clean, settings)

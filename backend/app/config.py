@@ -1,24 +1,12 @@
 """Lucifer backend configuration (env-driven, .env or env vars)."""
 from __future__ import annotations
 import os
-from pathlib import Path
-
-# Load .env from the backend dir (where run.py lives) so SARVAM_API_KEY etc.
-# are available without exporting them into the shell.
-try:
-    from dotenv import load_dotenv
-    _env = Path(__file__).resolve().parent.parent / ".env"
-    if _env.exists():
-        load_dotenv(_env)
-except Exception:  # dotenv optional; env vars may already be set
-    pass
-
 from pydantic import BaseModel, Field
 
 
 class Settings(BaseModel):
     host: str = Field(default=os.getenv("LUCIFER_HOST", "0.0.0.0"))
-    port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8000")))
+    port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8723")))
     # BRAIN = upstage/solar-pro4:free via Nous Portal (no Ollama). Free, FAST
     # (~4.5s, Hindi-native), unlike tencent/hy3:free which took 11-21s and
     # often returned empty content (it's a slow reasoning model).
@@ -28,24 +16,11 @@ class Settings(BaseModel):
     brain_api_key: str = Field(default=os.getenv("LUCIFER_BRAIN_KEY", ""))
     # STT / TTS
     device: str = Field(default=os.getenv("LUCIFER_DEVICE", "cpu"))  # cpu | cuda
-    stt_model: str = Field(default=os.getenv("STT_MODEL", "small"))    # tiny|base|small|medium
-    # STT backend selection (SAM: OpenAI Whisper via Nous FREE gateway = 1st).
-    #   nous_whisper  -> OpenAI Whisper through Nous Tool Gateway (FREE, key-less,
-    #                    better Hinglish, offloads VPS CPU). Falls back to local on error.
-    #   local         -> faster-whisper on VPS CPU (default offline).
-    stt_backend: str = Field(default=os.getenv("STT_BACKEND", "nous_whisper"))
-    # Nous Subscriber token + gateway (auto-read from ~/.hermes/auth.json).
-    hermes_home: str = Field(default=os.getenv("HERMES_HOME", os.path.expanduser("~/.hermes")))
-    nous_gateway_domain: str = Field(default=os.getenv("TOOL_GATEWAY_DOMAIN", "nousresearch.com"))
-    nous_gateway_scheme: str = Field(default=os.getenv("TOOL_GATEWAY_SCHEME", "https"))
-    # TTS VOICE POLICY (per SAM): ONLY Hindi/Hinglish.
-    # Primary: Sarvam Bulbul V3 — shubh (Indian MALE, default, native Hinglish, hi-IN).
-    # Fallback: Edge TTS Prabhat (Indian MALE, Hinglish) if Sarvam fails.
-    # tts_voice_hi kept only as offline fallback (Kokoro Hindi) if both cloud TTS fail.
+    stt_model: str = Field(default=os.getenv("STT_MODEL", "base"))    # tiny|base|small
+    # TTS VOICE POLICY (per SAM): ONLY Hindi/Hinglish via Arjun (Edge TTS).
+    # No English/USA-accent voice anywhere. tts_voice_hi kept only as offline
+    # fallback (Kokoro Hindi) if Edge TTS fails.
     tts_voice_hi: str = Field(default=os.getenv("TTS_VOICE_HI", "hm_psi"))
-    sarvam_api_key: str = Field(default=os.getenv("SARVAM_API_KEY", ""))
-    sarvam_speaker: str = Field(default=os.getenv("SARVAM_SPEAKER", "shubh"))
-    edge_hi_voice: str = Field(default=os.getenv("EDGE_HI_VOICE", "en-IN-PrabhatNeural"))
     # CORS (allow Flutter dev + Vercel frontend + local clients)
     cors_origins: list[str] = Field(default_factory=lambda: [
         o for o in (os.getenv("CORS_ORIGINS") or "*").split(",") if o

@@ -1,10 +1,9 @@
-// LUCIFER — Frontend logic
-// Talks to backend via Vercel serverless proxy at /api/* (HTTPS, no mixed-content).
-// /api/* -> Vercel function -> VPS:8000 (server-side). Mic uses browser Web Speech.
+// LUCIFER — Frontend logic (restored to STABLE v1.0 — SAM's saved backup)
+// Talks to backend via Vercel serverless proxy at /api/* (HTTPS, VPS-direct).
+// /api/* -> Vercel function -> VPS:8000. No Cloudflare/tunnel.
 
-// ===== CONFIG: backend via Vercel proxy (same-origin, no tunnel needed) =====
+// ===== CONFIG: backend via Vercel proxy (same-origin) =====
 const API_BASE = "/api";
-// ============================================================================
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
@@ -13,7 +12,8 @@ const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn")
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 
-let listening = false, busy = false;
+let audioEl = new Audio();
+let recog = null, listening = false, busy = false;
 
 // ---------- status ----------
 function setStatus(state) {
@@ -70,12 +70,10 @@ async function askLucifer(text) {
       body: JSON.stringify({ text }),
     });
     if (!r.ok) throw new Error("chat failed");
-    const reply = (await r.text()).trim();
-    if (!reply) throw new Error("empty reply");
-    addLine("lu", reply);
-    // Voice playback: backend synthesizes (Sarvam shubh + Edge fallback),
-    // frontend just fetches the mp3 and plays it. TTS logic stays backend-side.
-    await speak(reply);
+    const reply = await r.text();
+    addLine("lu", reply.trim());
+    // speak
+    await speak(reply.trim());
   } catch (e) {
     addLine("err", "Connection error — backend down?");
   } finally {
@@ -90,137 +88,52 @@ async function speak(text) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    if (!r.ok) throw new Error("tts failed " + r.status);
+    if (!r.ok) throw new Error("tts failed");
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
-    const el = new Audio();
-    el.src = url;
-    el.type = "audio/mpeg";
-    el.onended = () => URL.revokeObjectURL(url);
-    await el.play().catch(() => {});
+    audioEl.src = url;
+    await audioEl.play();
   } catch (e) {
-    console.warn("TTS playback skipped:", e);
+    console.warn("TTS failed, skipping audio", e);
   }
 }
 
-// ---------- voice input (mic -> backend Whisper via Nous) ----------
-// Silence detection uses the browser's NATIVE SpeechRecognition endpointing
-// (rock-solid on mobile, this is what gave the old "3s silence auto-stop").
-// Actual transcription is done by backend Whisper (far better Hinglish).
-let mediaRecorder = null, audioChunks = [], micStream = null, micReady = false;
-let vadRecog = null, vadActive = false, hasSpoken = false;
-let maxRecTimer = null;
-
-async function ensureMic() {
-  if (micReady) return true;
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
-    return false;
-  }
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-    });
-    mediaRecorder = new MediaRecorder(micStream, { mimeType: pickMime() });
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      stopVAD();
-      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
-      audioChunks = [];
-      if (blob.size > 1000) await sendVoice(blob);
-    };
-    micReady = true;
-    return true;
-  } catch (e) {
-    console.warn("mic permission denied", e);
-    return false;
-  }
-}
-
-function pickMime() {
-  const cands = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
-  for (const c of cands) if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
-  return "";
-}
-
-// Native SpeechRecognition used ONLY as a silence/endpoint detector.
-function startVAD() {
-  vadActive = true;
-  hasSpoken = false;
+// ---------- voice input (Web Speech API) ----------
+function setupSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return; // no VAD available -> rely on 15s cap
-  try {
-    vadRecog = new SR();
-    vadRecog.lang = "en-IN";
-    vadRecog.continuous = false;
-    vadRecog.interimResults = false;
-    vadRecog.onresult = () => { hasSpoken = true; };
-    // onend fires when the user stops talking (native endpointing ~ auto silence).
-    vadRecog.onend = () => {
-      if (vadActive && hasSpoken && listening) stopListen();
-      else if (vadActive) { try { vadRecog.start(); } catch (_) {} } // keep listening until speech seen
-    };
-    vadRecog.onerror = () => { if (vadActive) { try { vadRecog.start(); } catch (_) {} } };
-    vadRecog.start();
-  } catch (_) {}
-}
-function stopVAD() {
-  vadActive = false;
-  if (vadRecog) { try { vadRecog.stop(); } catch (_) {} vadRecog = null; }
-  clearTimeout(maxRecTimer); maxRecTimer = null;
+  if (!SR) return false;
+  recog = new SR();
+  recog.lang = "hi-IN"; // handles Hinglish; English words pass through
+  recog.interimResults = false;
+  recog.continuous = false;
+  recog.onresult = (e) => {
+    const txt = e.results[0][0].transcript.trim();
+    if (txt) askLucifer(txt);
+  };
+  recog.onerror = () => stopListen();
+  recog.onend = () => { if (listening) stopListen(); };
+  return true;
 }
 
-async function sendVoice(blob) {
-  if (busy) return;
-  busy = true; setStatus("busy"); orb.classList.add("speaking");
-  try {
-    const fd = new FormData();
-    fd.append("audio", blob, "voice.webm");
-    const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
-    if (!r.ok) throw new Error("voice failed " + r.status);
-    const data = await r.json();
-    if (data.text) addLine("you", data.text);
-    if (data.reply) {
-      addLine("lu", data.reply);
-      await speak(data.reply);
-    }
-  } catch (e) {
-    addLine("err", "Voice error — backend down?");
-  } finally {
-    busy = false; setStatus("on"); orb.classList.remove("speaking");
-  }
-}
-
-async function startListen() {
-  if (busy) return;
-  const ok = await ensureMic();
-  if (!ok || !mediaRecorder) {
-    alert("Mic not supported on this browser — use TYPE.");
-    return;
-  }
-  audioChunks = [];
+function startListen() {
+  if (!recog || busy) return;
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
-  micBtn.textContent = "■ Stop";
-  try { mediaRecorder.start(250); startVAD(); } catch (_) {}
-  // Hard cap: auto-stop after 15s no matter what (VAD fallback).
-  clearTimeout(maxRecTimer);
-  maxRecTimer = setTimeout(() => { if (listening) stopListen(); }, 15000);
+  try { recog.start(); } catch (_) {}
 }
 function stopListen() {
-  if (!mediaRecorder || !listening) return;
   listening = false;
-  stopVAD();
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
-  micBtn.textContent = "🎤 Talk";
-  try { mediaRecorder.stop(); } catch (_) {}
+  try { recog && recog.stop(); } catch (_) {}
 }
 
 // ---------- events ----------
-function toggleMic() { listening ? stopListen() : startListen(); }
-orb.addEventListener("click", toggleMic);
-micBtn.addEventListener("click", toggleMic);
+micBtn.addEventListener("click", () => {
+  if (!recog) { alert("Mic speech not supported on this browser — use TYPE."); return; }
+  listening ? stopListen() : startListen();
+});
 textBtn.addEventListener("click", () => {
   typebox.hidden = !typebox.hidden;
   if (!typebox.hidden) textInput.focus();
@@ -234,6 +147,10 @@ textInput.addEventListener("keydown", (e) => {
 });
 
 // ---------- boot ----------
+const hasSpeech = setupSpeech();
+if (!hasSpeech) {
+  micBtn.title = "Mic not supported — use TYPE";
+}
 // health check
 fetch(API_BASE + "/health")
   .then((r) => r.json())
