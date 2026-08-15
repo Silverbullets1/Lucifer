@@ -1,6 +1,6 @@
 // LUCIFER voice proxy — forwards mic audio to the backend VPS /voice endpoint
 // (STT: OpenAI Whisper via Nous free gateway + LLM). The browser calls
-// /api/voice (same-origin); we forward multipart audio to VPS:8000.
+// /api/voice (same-origin); we stream the raw request body to VPS:8000.
 const BACKEND = "http://152.67.14.127:8000/voice";
 
 module.exports = async function handler(req, res) {
@@ -9,10 +9,11 @@ module.exports = async function handler(req, res) {
     return;
   }
   try {
+    // Stream the raw multipart body straight to the backend.
     const upstream = await fetch(BACKEND, {
       method: "POST",
       headers: { "Content-Type": req.headers["content-type"] || "multipart/form-data" },
-      body: req.body,
+      body: req, // Vercel passes the raw IncomingMessage stream
     });
     const txt = await upstream.text();
     res.setHeader("Content-Type", "application/json");
