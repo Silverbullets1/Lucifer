@@ -3,5 +3,10 @@
   "buildCommand": null,
   "outputDirectory": ".",
   "framework": null,
+  "functions": {
+    "api/voice.js": { "maxDuration": 60 },
+    "api/chat/**": { "maxDuration": 30 },
+    "api/tts.js": { "maxDuration": 30 }
+  },
   "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
 }
