@@ -13,7 +13,7 @@ const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn")
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
 
-let recog = null, listening = false, busy = false;
+let hasSpeech = false, listening = false, busy = false;
 
 // ---------- status ----------
 function setStatus(state) {
@@ -103,35 +103,66 @@ async function speak(text) {
   }
 }
 
-// ---------- voice input (Web Speech API) ----------
-function setupSpeech() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return false;
-  recog = new SR();
-  recog.lang = "en-IN"; // Hinglish (Roman Hindi+English) — best for Web Speech; hi-IN mangles Roman
-  recog.interimResults = false;
-  recog.continuous = false;
-  recog.onresult = (e) => {
-    const txt = e.results[0][0].transcript.trim();
-    if (txt) askLucifer(txt);
-  };
-  recog.onerror = () => stopListen();
-  recog.onend = () => { if (listening) stopListen(); };
-  return true;
+// ---------- voice input (mic -> backend Whisper via Nous) ----------
+let mediaRecorder = null, audioChunks = [], micStream = null;
+
+async function setupSpeech() {
+  // We use the backend /voice endpoint (OpenAI Whisper via Nous, FREE).
+  // Browser SpeechRecognition is NOT used.
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    return false;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(micStream);
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+      audioChunks = [];
+      await sendVoice(blob);
+    };
+    return true;
+  } catch (e) {
+    console.warn("mic permission denied", e);
+    return false;
+  }
+}
+
+async function sendVoice(blob) {
+  if (busy) return;
+  busy = true; setStatus("busy"); orb.classList.add("speaking");
+  try {
+    const fd = new FormData();
+    fd.append("audio", blob, "voice.webm");
+    const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+    if (!r.ok) throw new Error("voice failed " + r.status);
+    const data = await r.json();
+    if (data.text) addLine("you", data.text);
+    if (data.reply) {
+      addLine("lu", data.reply);
+      await speak(data.reply);
+    }
+  } catch (e) {
+    addLine("err", "Voice error — backend down?");
+  } finally {
+    busy = false; setStatus("on"); orb.classList.remove("speaking");
+  }
 }
 
 function startListen() {
-  if (!recog || busy) return;
+  if (!mediaRecorder || busy) return;
+  audioChunks = [];
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
-  try { recog.start(); } catch (_) {}
+  try { mediaRecorder.start(); } catch (_) {}
 }
 function stopListen() {
+  if (!mediaRecorder || !listening) return;
   listening = false;
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
-  try { recog && recog.stop(); } catch (_) {}
+  try { mediaRecorder.stop(); } catch (_) {}
 }
 
 // ---------- events ----------
@@ -152,7 +183,7 @@ textInput.addEventListener("keydown", (e) => {
 });
 
 // ---------- boot ----------
-const hasSpeech = setupSpeech();
+setupSpeech().then((ok) => { hasSpeech = ok; });
 if (!hasSpeech) {
   micBtn.title = "Mic not supported — use TYPE";
 }

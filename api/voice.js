@@ -1,30 +1,23 @@
-const VPS_BASE = "http://152.67.14.127:8000";
-module.exports = async (req, res) => {
+// LUCIFER voice proxy — forwards mic audio to the backend VPS /voice endpoint
+// (STT: OpenAI Whisper via Nous free gateway + LLM). The browser calls
+// /api/voice (same-origin); we forward multipart audio to VPS:8000.
+const BACKEND = "http://152.67.14.127:8000/voice";
+
+module.exports = async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "method_not_allowed" });
+    return;
+  }
   try {
-    const url = new URL(req.url, "http://localhost");
-    const target = VPS_BASE + "/voice" + url.search;
-    const headers = {};
-    if (req.headers) for (const [k, v] of Object.entries(req.headers)) {
-      if (k.toLowerCase() === "host" || k.toLowerCase() === "connection") continue;
-      headers[k] = v;
-    }
-    let body;
-    if (req.method === "GET" || req.method === "HEAD") body = undefined;
-    else body = await new Promise((resolve) => {
-      const chunks = []; req.on("data", (c) => chunks.push(c)); req.on("end", () => resolve(Buffer.concat(chunks)));
+    const upstream = await fetch(BACKEND, {
+      method: "POST",
+      headers: { "Content-Type": req.headers["content-type"] || "multipart/form-data" },
+      body: req.body,
     });
-    const up = await fetch(target, { method: req.method, headers, body, redirect: "manual" });
-    res.statusCode = up.status;
-    up.headers.forEach((v, k) => {
-      const lk = k.toLowerCase();
-      if (["transfer-encoding","connection","content-encoding","content-length"].includes(lk)) return;
-      try { res.setHeader(k, v); } catch (_) {}
-    });
-    const buf = Buffer.from(await up.arrayBuffer());
-    res.end(buf);
+    const txt = await upstream.text();
+    res.setHeader("Content-Type", "application/json");
+    res.status(upstream.status).send(txt);
   } catch (e) {
-    res.statusCode = 502;
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({ error: "VPS unreachable", detail: String(e) }));
+    res.status(502).json({ error: "voice_proxy_error", detail: String(e) });
   }
 };
