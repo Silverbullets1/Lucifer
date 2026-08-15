@@ -72,6 +72,12 @@ function addLine(who, text) {
 // ---------- backend: text chat ----------
 async function askLucifer(text) {
   if (!text || busy) return;
+  // Stop command ends the hands-free loop
+  if (/^(band kar|stop|ruk|chup|bas|enough|quit|exit)\b/i.test(text.toLowerCase())) {
+    conversationOn = false;
+    addLine("lu", "Theek hai, band kar raha hoon. Dobara tap karna baat karne ke liye.");
+    return;
+  }
   busy = true; setStatus("busy"); orb.classList.add("speaking");
   addLine("you", text);
   try {
@@ -120,7 +126,7 @@ function setupSpeech() {
     recog.continuous = false;
     recog.onresult = (e) => {
       const txt = e.results[0][0].transcript.trim();
-      if (txt) { mode = "speech"; askLucifer(txt); }
+      if (txt) { mode = "speech"; askLuciferLoop(txt); }
     };
     recog.onerror = (ev) => {
       console.warn("SpeechRecognition error:", ev.error);
@@ -197,10 +203,16 @@ async function startFallback() {
       if (text.trim()) {
         addLine("you", text);
         const reply = data.reply || "";
-        if (reply) { addLine("lu", reply.trim()); await speak(reply.trim()); }
+        if (reply) {
+          addLine("lu", reply.trim());
+          await speak(reply.trim());
+          autoResume(); // hands-free loop: resume listening after reply
+          return;
+        }
       } else {
         addLine("err", "Couldn't hear clearly — try again.");
       }
+      autoResume();
     } catch (e) {
       addLine("err", "Voice backend error — try TYPE mode. (" + e.message + ")");
     } finally {
@@ -211,22 +223,35 @@ async function startFallback() {
   mediaRecorder.start();
 }
 
-// ---------- start / stop (orb tap = toggle) ----------
+// ---------- start / stop (orb tap = toggle conversation) ----------
 function startListen() {
-  if (busy) return;
+  if (busy && !listening) return;
   listening = true;
   conversationOn = true;
   orb.classList.add("listening");
   if (micEmoji) micEmoji.textContent = "🎙️";
   if (recog && !usingFallback) {
     mode = "speech";
-    try { recog.start(); setHint("Listening… speak now"); return; }
+    try { recog.start(); setHint("Sun raha hoon… bol lo"); return; }
     catch (_) {}
   }
   usingFallback = true;
   mode = "recorder";
-  setHint("Recording… tap orb again to stop");
+  setHint("Recording… (dobara tap = band)");
   startFallback();
+}
+
+// After a reply finishes, auto-resume listening (hands-free loop)
+function autoResume() {
+  if (conversationOn && !busy && !listening) {
+    startListen();
+  }
+}
+
+// Wrapped askLucifer -> on completion, auto-resume the loop
+async function askLuciferLoop(text) {
+  await askLucifer(text);
+  autoResume();
 }
 
 function stopListen() {
