@@ -103,9 +103,12 @@ async function speak(text) {
   }
 }
 
-// ---------- voice input (mic -> backend Whisper via Nous) with VAD ----------
+// ---------- voice input (mic -> backend Whisper via Nous) ----------
+// Silence detection uses the browser's NATIVE SpeechRecognition endpointing
+// (rock-solid on mobile, this is what gave the old "3s silence auto-stop").
+// Actual transcription is done by backend Whisper (far better Hinglish).
 let mediaRecorder = null, audioChunks = [], micStream = null, micReady = false;
-let audioCtx = null, silenceTimer = null, vadActive = false, hasSpoken = false;
+let vadRecog = null, vadActive = false, hasSpoken = false;
 let maxRecTimer = null;
 
 async function ensureMic() {
@@ -117,15 +120,8 @@ async function ensureMic() {
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
     });
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === "suspended") await audioCtx.resume();
     mediaRecorder = new MediaRecorder(micStream, { mimeType: pickMime() });
-    mediaRecorder.ondataavailable = async (e) => {
-      if (e.data.size > 0) {
-        audioChunks.push(e.data);
-        analyseChunk(e.data); // VAD on real recorded audio
-      }
-    };
+    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
     mediaRecorder.onstop = async () => {
       stopVAD();
       const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
@@ -146,32 +142,30 @@ function pickMime() {
   return "";
 }
 
-// VAD via real recorded-chunk RMS (works everywhere MediaRecorder works,
-// unlike AnalyserNode which is flaky on mobile). 3s silence after speech -> stop.
-async function analyseChunk(blob) {
-  if (!vadActive || !audioCtx) return;
-  try {
-    const buf = await blob.arrayBuffer();
-    const audio = await audioCtx.decodeAudioData(buf.slice(0));
-    const data = audio.getChannelData(0);
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
-    const rms = Math.sqrt(sum / data.length);
-    if (rms >= 0.01) {
-      hasSpoken = true;
-      clearTimeout(silenceTimer); silenceTimer = null;
-    } else if (hasSpoken) {
-      if (!silenceTimer) silenceTimer = setTimeout(() => { if (listening) stopListen(); }, 3000);
-    }
-  } catch (_) { /* decode may fail on partial chunks; ignore */ }
-}
+// Native SpeechRecognition used ONLY as a silence/endpoint detector.
 function startVAD() {
   vadActive = true;
   hasSpoken = false;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return; // no VAD available -> rely on 15s cap
+  try {
+    vadRecog = new SR();
+    vadRecog.lang = "en-IN";
+    vadRecog.continuous = false;
+    vadRecog.interimResults = false;
+    vadRecog.onresult = () => { hasSpoken = true; };
+    // onend fires when the user stops talking (native endpointing ~ auto silence).
+    vadRecog.onend = () => {
+      if (vadActive && hasSpoken && listening) stopListen();
+      else if (vadActive) { try { vadRecog.start(); } catch (_) {} } // keep listening until speech seen
+    };
+    vadRecog.onerror = () => { if (vadActive) { try { vadRecog.start(); } catch (_) {} } };
+    vadRecog.start();
+  } catch (_) {}
 }
 function stopVAD() {
   vadActive = false;
-  clearTimeout(silenceTimer); silenceTimer = null;
+  if (vadRecog) { try { vadRecog.stop(); } catch (_) {} vadRecog = null; }
   clearTimeout(maxRecTimer); maxRecTimer = null;
 }
 
