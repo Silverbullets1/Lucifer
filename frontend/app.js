@@ -27,6 +27,11 @@ audioEl.setAttribute("webkit-playsinline", "");
 audioEl.preload = "auto";
 let listening = false, busy = false, conversationOn = false;
 let mediaStream = null, mediaRecorder = null, audioChunks = [];
+// VAD (Voice Activity Detection) — auto-send when user stops talking
+let audioCtx = null, analyser = null, vadInterval = null;
+let silenceStart = 0;
+const SILENCE_LIMIT = 1800;   // ms of silence → auto-send
+const VAD_THRESHOLD = 0.01;   // volume threshold for "silence"
 
 // ---------- audio unlock (mobile autoplay policy) ----------
 let audioUnlocked = false;
@@ -198,9 +203,10 @@ async function startListen() {
   audioChunks = [];
   mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) audioChunks.push(e.data); };
   mediaRecorder.onstop = async () => {
+    stopVAD();
     const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
     stopMicTracks();
-    if (blob.size < 500) { // ignore accidental empty taps
+    if (blob.size < 500) {
       if (conversationOn && !busy && !listening) startListen();
       return;
     }
@@ -223,6 +229,36 @@ async function startListen() {
     }
   };
   mediaRecorder.start();
+  // Start VAD — detect silence → auto-send
+  startVAD();
+}
+
+function startVAD() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    const src = audioCtx.createMediaStreamSource(mediaStream);
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    silenceStart = Date.now();
+    vadInterval = setInterval(() => {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      if (rms > VAD_THRESHOLD) { silenceStart = Date.now(); }
+      else if (Date.now() - silenceStart > SILENCE_LIMIT && mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    }, 200);
+  } catch (_) {}
+}
+
+function stopVAD() {
+  if (vadInterval) { clearInterval(vadInterval); vadInterval = null; }
+  try { if (audioCtx) audioCtx.close(); } catch (_) {}
+  audioCtx = null; analyser = null;
 }
 
 function stopMicTracks() {
@@ -245,12 +281,22 @@ function stopListen() {
   }
 }
 
-// Unified one-tap toggle on the ORB (mouse + touch + pen).
+// ---------- orb tap: TOGGLE conversation on/off ----------
+// Continuous voice mode (ChatGPT/Gemini style):
+//   TAP ONCE → start listening → speak → auto-send on silence → reply → auto-resume
+//   TAP AGAIN → end conversation (stop listening + stop reply audio)
 orb.addEventListener("pointerup", (e) => {
   e.preventDefault();
   unlockAudio();
-  if (busy) return;            // don't toggle while Lucifer is replying
-  listening ? stopListen() : startListen();
+  if (busy) return;
+  if (listening || conversationOn) {
+    // End conversation: stop recording + audio playback
+    stopListen();
+    try { audioEl.pause(); } catch (_) {}
+  } else {
+    // Start conversation
+    startListen();
+  }
 });
 
 // ---------- events ----------
