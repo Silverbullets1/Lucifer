@@ -301,7 +301,8 @@ orb.addEventListener("pointerup", (e) => {
 });
 
 // ---------- events ----------
-micBtn.addEventListener("click", () => {
+const _micBtn = $("micBtn");
+if (_micBtn) _micBtn.addEventListener("click", () => {
   if (!hasMediaSupport()) { alert("Mic not supported on this browser — use TYPE."); return; }
   listening ? stopListen() : startListen();
 });
