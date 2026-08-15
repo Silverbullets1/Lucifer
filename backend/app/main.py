@@ -261,7 +261,9 @@ async def ws(ws: WebSocket):
                 data = data.encode()
             if not data:
                 continue
-            text = transcribe(data, settings)
+            # Run blocking STT in a worker thread so the event loop stays free
+            # for other concurrent websocket clients.
+            text = await asyncio.to_thread(transcribe, data, settings)
             await ws.send_json({"type": "stt", "text": text})
             if not text.strip():
                 continue

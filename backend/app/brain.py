@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import httpx
-from .config import Settings
+from .config import Settings, settings
 
 log = logging.getLogger("lucifer.brain")
 
@@ -74,7 +74,7 @@ async def reply(user_text: str, history=None) -> str:
             f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}",
                      "Content-Type": "application/json"},
-            json={"model": Settings().model, "messages": messages,
+            json={"model": settings.model, "messages": messages,
                   "max_tokens": 700, "temperature": 0.8},
         )
         resp.raise_for_status()

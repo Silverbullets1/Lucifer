@@ -5,13 +5,18 @@ from .config import Settings
 
 log = logging.getLogger("lucifer.stt")
 _model = None
+_model_name = None
 
 
 def _get_model(settings: Settings):
-    global _model
-    if _model is None:
+    global _model, _model_name
+    want = settings.stt_model
+    if _model is None or _model_name != want:
         from faster_whisper import WhisperModel
-        _model = WhisperModel(settings.stt_model, device=settings.device, compute_type="int8")
+        # release old model first to free CPU RAM on switch
+        _model = None
+        _model = WhisperModel(want, device=settings.device, compute_type="int8")
+        _model_name = want
     return _model
 
 

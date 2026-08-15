@@ -98,7 +98,16 @@ async function askLucifer(text) {
 }
 
 // ---------- backend: TTS ----------
+// IMPORTANT: while TTS plays, the mic MUST be paused so the assistant does
+// not hear its OWN voice and loop on itself (acoustic feedback). We pause
+// listening before playback and only resume the hands-free loop AFTER the
+// audio finishes + a short guard gap.
+let _speakResumePending = false;
+
 async function speak(text) {
+  // Pause any active listening (Web Speech or MediaRecorder) before playing.
+  const wasListening = listening || (mediaRecorder && mediaRecorder.state === "recording");
+  if (wasListening) pauseListenForPlayback();
   try {
     const r = await fetch(API_BASE + "/tts", {
       method: "POST",
@@ -110,9 +119,37 @@ async function speak(text) {
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
     await audioEl.play();
+    // wait for playback to actually end
+    await new Promise((res) => {
+      audioEl.onended = res;
+      setTimeout(res, 30000); // hard cap so we never hang
+    });
   } catch (e) {
     console.warn("TTS failed, skipping audio", e);
+  } finally {
+    // small guard gap so the tail of TTS doesn't get re-captured, then resume
+    if (_speakResumePending) {
+      setTimeout(() => {
+        _speakResumePending = false;
+        if (conversationOn && !busy && !listening) startListen();
+      }, 350);
+    }
   }
+}
+
+// Pause listening during playback WITHOUT ending the conversation loop.
+function pauseListenForPlayback() {
+  if (recog && mode === "speech") {
+    try { recog.stop(); } catch (_) {}
+  }
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    try { mediaRecorder.stop(); } catch (_) {}
+    // keep mediaStream so we can resume; stopListen() would drop it
+  }
+  listening = false;
+  orb.classList.remove("listening");
+  if (micEmoji) micEmoji.textContent = "🎙️";
+  _speakResumePending = conversationOn; // resume only if loop was active
 }
 
 // ---------- VOICE: Web Speech API (primary) ----------
@@ -241,9 +278,10 @@ function startListen() {
   startFallback();
 }
 
-// After a reply finishes, auto-resume listening (hands-free loop)
+// After a reply finishes, auto-resume listening (hands-free loop).
+// Guard: never resume while a TTS playback / speak is still in flight.
 function autoResume() {
-  if (conversationOn && !busy && !listening) {
+  if (conversationOn && !busy && !listening && !_speakResumePending) {
     startListen();
   }
 }
