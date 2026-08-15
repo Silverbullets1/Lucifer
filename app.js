@@ -104,11 +104,11 @@ async function speak(text) {
 }
 
 // ---------- voice input (mic -> backend Whisper via Nous) ----------
-let mediaRecorder = null, audioChunks = [], micStream = null;
+let mediaRecorder = null, audioChunks = [], micStream = null, micReady = false;
 
-async function setupSpeech() {
-  // We use the backend /voice endpoint (OpenAI Whisper via Nous, FREE).
-  // Browser SpeechRecognition is NOT used.
+async function ensureMic() {
+  // Lazily init mic on first user gesture (browsers block pre-gesture getUserMedia).
+  if (micReady) return true;
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
     return false;
   }
@@ -121,6 +121,7 @@ async function setupSpeech() {
       audioChunks = [];
       await sendVoice(blob);
     };
+    micReady = true;
     return true;
   } catch (e) {
     console.warn("mic permission denied", e);
@@ -149,8 +150,13 @@ async function sendVoice(blob) {
   }
 }
 
-function startListen() {
-  if (!mediaRecorder || busy) return;
+async function startListen() {
+  if (busy) return;
+  const ok = await ensureMic();
+  if (!ok || !mediaRecorder) {
+    alert("Mic not supported on this browser — use TYPE.");
+    return;
+  }
   audioChunks = [];
   listening = true;
   orb.classList.add("listening");
@@ -167,7 +173,6 @@ function stopListen() {
 
 // ---------- events ----------
 micBtn.addEventListener("click", () => {
-  if (!recog) { alert("Mic speech not supported on this browser — use TYPE."); return; }
   listening ? stopListen() : startListen();
 });
 textBtn.addEventListener("click", () => {
@@ -183,10 +188,6 @@ textInput.addEventListener("keydown", (e) => {
 });
 
 // ---------- boot ----------
-setupSpeech().then((ok) => { hasSpeech = ok; });
-if (!hasSpeech) {
-  micBtn.title = "Mic not supported — use TYPE";
-}
 // health check
 fetch(API_BASE + "/health")
   .then((r) => r.json())
