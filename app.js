@@ -161,13 +161,19 @@ async function startListen() {
   listening = true;
   orb.classList.add("listening");
   micBtn.classList.add("hold");
+  micBtn.textContent = "■ Stop";
   try { mediaRecorder.start(); } catch (_) {}
+  // Auto-stop after 12s so a single click still produces audio.
+  clearTimeout(startListen._t);
+  startListen._t = setTimeout(() => { if (listening) stopListen(); }, 12000);
 }
 function stopListen() {
   if (!mediaRecorder || !listening) return;
   listening = false;
+  clearTimeout(startListen._t);
   orb.classList.remove("listening");
   micBtn.classList.remove("hold");
+  micBtn.textContent = "🎤 Talk";
   try { mediaRecorder.stop(); } catch (_) {}
 }
 
