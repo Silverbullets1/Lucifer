@@ -4,7 +4,14 @@
 // (cross-platform: Chrome, Firefox, Edge, Safari, Android, iOS, PC, laptop).
 
 // ===== CONFIG: backend via Vercel proxy (same-origin, no tunnel needed) =====
-const API_BASE = "/api";
+const sessId = (() => {
+  // stable per-client session id for conversation memory across turns
+  let s = localStorage.getItem("lucifer_sid");
+  if (!s) { s = "w-" + Math.random().toString(36).slice(2, 12); localStorage.setItem("lucifer_sid", s); }
+  return s;
+})();
+const VOICE_URL = API_BASE + "/voice?sid=" + sessId;
+const CHAT_URL = API_BASE + "/chat/stream?sid=" + sessId;
 // ============================================================================
 
 const $ = (id) => document.getElementById(id);
@@ -80,7 +87,7 @@ async function askLucifer(text) {
   busy = true; setStatus("busy"); orb.classList.add("speaking");
   addLine("you", text);
   try {
-    const r = await fetch(API_BASE + "/chat/stream", {
+    const r = await fetch(CHAT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
@@ -185,7 +192,7 @@ async function startListen() {
     const fd = new FormData();
     fd.append("audio", blob, "voice.webm");
     try {
-      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      const r = await fetch(VOICE_URL, { method: "POST", body: fd });
       if (!r.ok) throw new Error("voice failed " + r.status);
       const j = await r.json();
       if (j.text) addLine("you", j.text);

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class Settings(BaseModel):
     host: str = Field(default=os.getenv("LUCIFER_HOST", "0.0.0.0"))
-    port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8723")))
+    port: int = Field(default=int(os.getenv("LUCIFER_PORT", "8000")))
     # BRAIN = upstage/solar-pro4:free via Nous Portal (no Ollama). Free, FAST
     # (~4.5s, Hindi-native), unlike tencent/hy3:free which took 11-21s and
     # often returned empty content (it's a slow reasoning model).

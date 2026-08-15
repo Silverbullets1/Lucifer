@@ -20,11 +20,12 @@ def _get_model(settings: Settings):
     return _model
 
 
-def transcribe(audio_bytes: bytes, settings: Settings) -> str:
+def transcribe(audio_bytes: bytes, settings: Settings, session_id: str = "default") -> str:
     model = _get_model(settings)
-    # faster-whisper accepts a path or file-like; write to temp for safety
-    import tempfile, os
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+    import tempfile, os, time, random
+    # unique temp filename per session/timestamp to avoid cross-request race
+    suffix = f"_{session_id}_{int(time.time()*1000)}_{random.randint(1000,9999)}.wav"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
         f.write(audio_bytes)
         path = f.name
     try:

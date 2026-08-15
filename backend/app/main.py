@@ -144,17 +144,45 @@ async def root():
 class ChatReq(BaseModel):
     text: str
     history: list[dict] | None = None
+    sid: str | None = "default"  # session id for conversation memory
+
+
+# In-memory session store (sid -> list of {role, content}).
+# Bounded to settings.memory_turns per session to cap RAM.
+_sessions: dict[str, list[dict]] = {}
+
+
+def _get_history(sid: str) -> list[dict]:
+    """Return recent turns for a session, trimming to memory_turns*2."""
+    hist = _sessions.get(sid, [])
+    keep = max(2, settings.memory_turns) * 2
+    if len(hist) > keep:
+        hist = hist[-keep:]
+        _sessions[sid] = hist
+    return hist
+
+
+def _save_turn(sid: str, role: str, content: str):
+    hist = _sessions.setdefault(sid, [])
+    hist.append({"role": role, "content": content})
+    keep = max(2, settings.memory_turns) * 2
+    if len(hist) > keep:
+        del hist[: len(hist) - keep]
 
 
 @app.post("/chat")
 async def chat(req: ChatReq):
     """Text-in -> text-out (used for quick testing / non-voice mode)."""
+    hist = list(req.history or _get_history(req.sid or "default"))
     try:
-        reply = await brain_reply(req.text, req.history or [])
+        reply = await brain_reply(req.text, hist)
         reply = sanitize_reply(reply)
     except Exception as e:
         log.exception("chat failed")
         raise HTTPException(500, str(e))
+    if not req.history:
+        _save_turn(req.sid or "default", "user", req.text)
+        _save_turn(req.sid or "default", "assistant", reply)
     return {"reply": reply}
 
 
@@ -184,7 +212,7 @@ async def chat_stream(req: ChatReq):
 
 
 @app.post("/voice")
-async def voice(audio: UploadFile = File(...)):
+async def voice(audio: UploadFile = File(...), sid: str = "default"):
     """Voice-in: audio file -> STT -> LLM -> TTS audio (wav bytes)."""
     data = await audio.read()
     if not data:
@@ -210,19 +238,22 @@ async def voice(audio: UploadFile = File(...)):
         wav_bytes = data  # fall back to original
     finally:
         shutil.rmtree(os.path.dirname(in_path), ignore_errors=True)
-    # 1) STT
+    # 1) STT — pass sid for unique temp filename (avoids cross-request temp race)
     try:
-        text = transcribe(wav_bytes, settings)
+        text = transcribe(wav_bytes, settings, session_id=sid)
     except Exception as e:
         log.exception("stt failed")
         raise HTTPException(500, f"stt: {e}")
     log.info("USER: %s", text)
     if not text.strip():
-        return {"text": "", "reply": "", "audio_b64": ""}
-    # 2) LLM
+        return {"text": "", "reply": "", "audio_b64": "", "sid": sid}
+    # 2) LLM — use session history for conversation continuity
     try:
-        reply = await brain_reply(text)
+        hist = _get_history(sid)
+        reply = await brain_reply(text, hist)
         reply = sanitize_reply(reply)
+        _save_turn(sid, "user", text)
+        _save_turn(sid, "assistant", reply)
     except Exception as e:
         log.exception("llm failed")
         raise HTTPException(500, f"llm: {e}")
