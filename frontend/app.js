@@ -1,6 +1,7 @@
 // LUCIFER — Frontend logic
 // Talks to backend via Vercel serverless proxy at /api/* (HTTPS, no mixed-content).
-// /api/* -> Vercel function -> VPS:8000 (server-side). Mic uses browser Web Speech.
+// /api/* -> Vercel function -> VPS:8000 (server-side). Mic uses MediaRecorder
+// (cross-platform: Chrome, Firefox, Edge, Safari, Android, iOS, PC, laptop).
 
 // ===== CONFIG: backend via Vercel proxy (same-origin, no tunnel needed) =====
 const API_BASE = "/api";
@@ -17,7 +18,8 @@ let audioEl = new Audio();
 audioEl.setAttribute("playsinline", "");
 audioEl.setAttribute("webkit-playsinline", "");
 audioEl.preload = "auto";
-let recog = null, listening = false, busy = false;
+let listening = false, busy = false, conversationOn = false;
+let mediaStream = null, mediaRecorder = null, audioChunks = [];
 
 // ---------- audio unlock (mobile autoplay policy) ----------
 let audioUnlocked = false;
@@ -66,8 +68,8 @@ drawWave(false);
 function addLine(who, text) {
   if (hint) { hint.remove(); }
   const p = document.createElement("p");
-  p.className = who === "you" ? "you" : "lu";
-  p.textContent = (who === "you" ? "🧑 " : "😈 ") + text;
+  p.className = who === "you" ? "you" : (who === "err" ? "err" : "lu");
+  p.textContent = (who === "you" ? "🧑 " : who === "err" ? "⚠️ " : "😈 ") + text;
   transcript.appendChild(p);
   transcript.scrollTop = transcript.scrollHeight;
 }
@@ -87,7 +89,6 @@ async function askLucifer(text) {
     const reply = (await r.text()).trim();
     if (!reply) throw new Error("empty reply");
     addLine("lu", reply);
-    // speak with Sarvam (backend) voice
     await speak(reply);
   } catch (e) {
     addLine("err", "Connection error — backend down?");
@@ -112,7 +113,8 @@ async function speak(text) {
     if (!blob.size) throw new Error("empty audio");
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
-    audioEl.type = "audio/mpeg";
+    // Let the browser sniff real codec (mp3 from Sarvam, wav from fallback).
+    audioEl.type = blob.type && blob.type !== "application/json" ? blob.type : "";
     await audioEl.play();
     await new Promise((res) => {
       audioEl.onended = res;
@@ -121,45 +123,117 @@ async function speak(text) {
   } catch (e) {
     console.warn("TTS failed, skipping audio", e);
   } finally {
-    // resume hands-free loop only if user hadn't toggled off during playback
     if (conversationOn && !busy && !listening) startListen();
   }
 }
 
-// ---------- voice input (Web Speech API) ----------
-function setupSpeech() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return false;
-  recog = new SR();
-  recog.lang = "en-IN"; // Hinglish (Roman Hindi+English) — best for Web Speech; hi-IN mangles Roman
-  recog.interimResults = false;
-  recog.continuous = false;
-  recog.onresult = (e) => {
-    const txt = e.results[0][0].transcript.trim();
-    if (txt) askLucifer(txt);
-  };
-  recog.onerror = () => stopListen();
-  recog.onend = () => { if (listening) stopListen(); };
-  return true;
+// ---------- voice input (MediaRecorder, cross-platform) ----------
+// ONE-TAP TOGGLE. We use the POINTER EVENT (pointerup) instead of click/touchstart.
+// Why:
+//   1) Using `touchstart`+preventDefault kills the synthesized click on mobile
+//      (iOS/Android) so the orb tap did nothing — that was the "tap doesn't work"
+//      bug. pointerup fires exactly once per tap on every device.
+//   2) A single unified handler for mouse/touch/pen avoids the double-fire you
+//      get when you bind both touch and click on mobile.
+// CSS ships `touch-action: manipulation` so there is no 300ms delay / zoom.
+function hasMediaSupport() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && typeof MediaRecorder !== "undefined");
 }
 
-function startListen() {
-  if (!recog || busy) return;
+function pickMimeType() {
+  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  for (const m of types) {
+    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+
+async function startListen() {
+  if (listening || busy) return;
+  if (!hasMediaSupport()) {
+    alert("Mic not supported on this browser — use TYPE.");
+    return;
+  }
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    addLine("err", "Mic permission denied — allow mic and retry, or use TYPE.");
+    return;
+  }
   listening = true;
+  conversationOn = true;
   orb.classList.add("listening");
-  micBtn.classList.add("hold");
-  try { recog.start(); } catch (_) {}
+  orb.setAttribute("aria-pressed", "true");
+  const mime = pickMimeType();
+  try {
+    mediaRecorder = mime ? new MediaRecorder(mediaStream, { mimeType: mime })
+                         : new MediaRecorder(mediaStream);
+  } catch (e) {
+    addLine("err", "Recorder init failed on this browser — use TYPE.");
+    stopListen();
+    return;
+  }
+  audioChunks = [];
+  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) audioChunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    stopMicTracks();
+    if (blob.size < 500) { // ignore accidental empty taps
+      if (conversationOn && !busy && !listening) startListen();
+      return;
+    }
+    const fd = new FormData();
+    fd.append("audio", blob, "voice.webm");
+    try {
+      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      if (!r.ok) throw new Error("voice failed " + r.status);
+      const j = await r.json();
+      if (j.text) addLine("you", j.text);
+      if (j.reply) {
+        addLine("lu", j.reply);
+        await speak(j.reply);
+      } else if (conversationOn && !busy && !listening) {
+        startListen();
+      }
+    } catch (e) {
+      addLine("err", "Voice send failed — backend down?");
+      if (conversationOn && !busy && !listening) startListen();
+    }
+  };
+  mediaRecorder.start();
 }
+
+function stopMicTracks() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((t) => t.stop());
+    mediaStream = null;
+  }
+}
+
 function stopListen() {
+  if (!listening && !conversationOn) return;
   listening = false;
+  conversationOn = false;
   orb.classList.remove("listening");
-  micBtn.classList.remove("hold");
-  try { recog && recog.stop(); } catch (_) {}
+  orb.setAttribute("aria-pressed", "false");
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try { mediaRecorder.stop(); } catch (_) {}
+  } else {
+    stopMicTracks();
+  }
 }
+
+// Unified one-tap toggle on the ORB (mouse + touch + pen).
+orb.addEventListener("pointerup", (e) => {
+  e.preventDefault();
+  unlockAudio();
+  if (busy) return;            // don't toggle while Lucifer is replying
+  listening ? stopListen() : startListen();
+});
 
 // ---------- events ----------
 micBtn.addEventListener("click", () => {
-  if (!recog) { alert("Mic speech not supported on this browser — use TYPE."); return; }
+  if (!hasMediaSupport()) { alert("Mic not supported on this browser — use TYPE."); return; }
   listening ? stopListen() : startListen();
 });
 textBtn.addEventListener("click", () => {
@@ -173,10 +247,13 @@ sendBtn.addEventListener("click", () => {
 textInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendBtn.click();
 });
+// keyboard accessibility for the orb
+orb.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); orb.dispatchEvent(new PointerEvent("pointerup")); }
+});
 
 // ---------- boot ----------
-const hasSpeech = setupSpeech();
-if (!hasSpeech) {
+if (!hasMediaSupport()) {
   micBtn.title = "Mic not supported — use TYPE";
 }
 // health check

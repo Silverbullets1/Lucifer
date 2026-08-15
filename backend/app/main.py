@@ -238,13 +238,18 @@ async def voice(audio: UploadFile = File(...)):
 
 @app.post("/tts")
 async def tts(req: ChatReq):
-    """Text-in -> TTS audio (wav bytes). Used by the web frontend to speak replies."""
+    """Text-in -> TTS audio (mp3 from Sarvam, or wav from fallback). Used by the web frontend to speak replies."""
     try:
         wav_bytes = await synthesize(req.text, settings)
     except Exception as e:
         log.exception("tts failed")
         raise HTTPException(500, f"tts: {e}")
-    return StreamingResponse(io.BytesIO(wav_bytes), media_type="audio/wav")
+    # Sarvam returns mp3; fallback voices may return wav. Sniff the real format
+    # so the browser <audio> element gets a correct Content-Type (no mismatch).
+    ctype = "audio/wav"
+    if wav_bytes[:4] == b"ID3" or wav_bytes[:2] == b"\xff\xfb" or wav_bytes[:2] == b"\xff\xf3":
+        ctype = "audio/mpeg"
+    return StreamingResponse(io.BytesIO(wav_bytes), media_type=ctype)
 
 
 @app.websocket("/ws")
