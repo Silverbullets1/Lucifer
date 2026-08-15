@@ -255,18 +255,24 @@ async function askLuciferLoop(text) {
   autoResume();
 }
 
-// ---------- orb = mic button (ONE TAP TOGGLE, all platforms) ----------
+// ---------- orb = mic button (ONE TAP TOGGLE, ALL PLATFORMS) ----------
+// We use the POINTER EVENT (pointerup) instead of click/touchstart. The
+// Pointer Events API unifies mouse + touch + pen across Chrome, Firefox,
+// Android, iOS (Safari 13+), PC and laptop. This avoids two classic bugs:
+//   1) Using `touchstart`+preventDefault kills the synthesized click on
+//      iOS/Android, so the tap did nothing (the bug we just hit).
+//   2) Using `click` alone can double-fire on mobile (touch+mouse emulation).
+// pointerup fires exactly once per physical tap on every platform.
 function toggleOrb() {
   listening ? stopListen() : startListen();
 }
-orb.addEventListener("click", toggleOrb);
+orb.addEventListener("pointerup", (e) => {
+  e.preventDefault();
+  toggleOrb();
+});
 orb.addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleOrb(); }
 });
-// Prevent the ghost touchstart->click double fire on Android/iOS from toggling
-// twice. We swallow touchstart (it would otherwise also emit a click) and rely
-// solely on the click event for a clean single-toggle on mobile.
-orb.addEventListener("touchstart", (e) => { e.preventDefault(); }, { passive: false });
 
 // ---------- text mode ----------
 textBtn.addEventListener("click", () => {
