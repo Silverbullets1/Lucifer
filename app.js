@@ -1,39 +1,53 @@
-// LUCIFER — Frontend logic (orb = mic, real-time conversation)
-// Backend via Vercel serverless proxy /api/* -> VPS:8000.
-//
-// CROSS-PLATFORM VOICE (Chrome / Firefox / Android / iOS / PC / laptop):
-//   We use the MediaRecorder API + getUserMedia to capture mic audio and
-//   send it to the backend /voice endpoint (faster-whisper STT). This works
-//   UNIFORMLY on every modern browser. We deliberately do NOT use the Web
-//   Speech API — it is Chrome/Android-only and behaves differently (or is
-//   absent) on Firefox and iOS Safari, which broke cross-platform parity.
-//
-// UX: TAP the ORB to start listening, TAP again to stop. After Lucifer
-//   replies it auto-resumes listening (hands-free loop) until you tap to
-//   stop or say a stop word.
-// Output voice: Sarvam shubh (backend, via /tts) played through <audio>.
+// LUCIFER — Frontend logic
+// Talks to backend via Vercel serverless proxy at /api/* (HTTPS, no mixed-content).
+// /api/* -> Vercel function -> VPS:8000 (server-side). Mic uses MediaRecorder
+// (cross-platform: Chrome, Firefox, Edge, Safari, Android, iOS, PC, laptop).
 
-const API_BASE = "/api";
+// ===== CONFIG: backend via Vercel proxy (same-origin, no tunnel needed) =====
+const sessId = (() => {
+  // stable per-client session id for conversation memory across turns
+  let s = localStorage.getItem("lucifer_sid");
+  if (!s) { s = "w-" + Math.random().toString(36).slice(2, 12); localStorage.setItem("lucifer_sid", s); }
+  return s;
+})();
+const VOICE_URL = API_BASE + "/voice?sid=" + sessId;
+const CHAT_URL = API_BASE + "/chat/stream?sid=" + sessId;
+// ============================================================================
 
 const $ = (id) => document.getElementById(id);
 const orb = $("orb"), orbCore = $("orbCore");
-const textBtn = $("textBtn");
+const micBtn = $("micBtn"), textBtn = $("textBtn");
 const typebox = $("typebox"), textInput = $("textInput"), sendBtn = $("sendBtn");
 const transcript = $("transcript"), hint = $("hint");
 const dot = $("dot"), statusText = $("statusText");
-const micEmoji = document.querySelector(".mic-emoji");
 
 let audioEl = new Audio();
+audioEl.setAttribute("playsinline", "");
+audioEl.setAttribute("webkit-playsinline", "");
+audioEl.preload = "auto";
 let listening = false, busy = false, conversationOn = false;
-let mediaRecorder = null, mediaChunks = [], mediaStream = null;
-let _speakResumePending = false;
+let mediaStream = null, mediaRecorder = null, audioChunks = [];
+// VAD (Voice Activity Detection) — auto-send when user stops talking
+let audioCtx = null, analyser = null, vadInterval = null;
+let silenceStart = 0;
+const SILENCE_LIMIT = 1800;   // ms of silence → auto-send
+const VAD_THRESHOLD = 0.01;   // volume threshold for "silence"
+
+// ---------- audio unlock (mobile autoplay policy) ----------
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try { audioEl.play().then(() => audioEl.pause()).catch(() => {}); } catch (_) {}
+}
+document.addEventListener("pointerdown", unlockAudio, { once: true });
+document.addEventListener("keydown", unlockAudio, { once: true });
 
 // ---------- status ----------
 function setStatus(state) {
   dot.className = "dot" + (state === "on" ? " on" : state === "busy" ? " busy" : "");
   statusText.textContent = state === "on" ? "online" : state === "busy" ? "thinking…" : "offline";
 }
-function setHint(msg) { if (hint) hint.textContent = msg; }
 
 // ---------- waveform ----------
 const cv = $("wave"), cx = cv.getContext("2d");
@@ -66,32 +80,28 @@ drawWave(false);
 function addLine(who, text) {
   if (hint) { hint.remove(); }
   const p = document.createElement("p");
-  p.className = who === "you" ? "you" : who === "err" ? "err" : "lu";
-  p.textContent = (who === "you" ? "🧑 " : who === "lu" ? "😈 " : "⚠️ ") + text;
+  p.className = who === "you" ? "you" : (who === "err" ? "err" : "lu");
+  p.textContent = (who === "you" ? "🧑 " : who === "err" ? "⚠️ " : "😈 ") + text;
   transcript.appendChild(p);
   transcript.scrollTop = transcript.scrollHeight;
 }
 
-// ---------- backend: text chat ----------
+// ---------- backend calls ----------
 async function askLucifer(text) {
   if (!text || busy) return;
-  if (/^(band kar|stop|ruk|chup|bas|enough|quit|exit)\b/i.test(text.toLowerCase())) {
-    conversationOn = false;
-    addLine("lu", "Theek hai, band kar raha hoon. Dobara tap karna baat karne ke liye.");
-    return;
-  }
   busy = true; setStatus("busy"); orb.classList.add("speaking");
   addLine("you", text);
   try {
-    const r = await fetch(API_BASE + "/chat/stream", {
+    const r = await fetch(CHAT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
     if (!r.ok) throw new Error("chat failed");
-    const reply = await r.text();
-    addLine("lu", reply.trim());
-    await speak(reply.trim());
+    const reply = (await r.text()).trim();
+    if (!reply) throw new Error("empty reply");
+    addLine("lu", reply);
+    await speak(reply);
   } catch (e) {
     addLine("err", "Connection error — backend down?");
   } finally {
@@ -99,12 +109,11 @@ async function askLucifer(text) {
   }
 }
 
-// ---------- backend: TTS ----------
-// While TTS plays, the mic MUST be paused so Lucifer doesn't hear its own
-// voice and loop (acoustic feedback). Pause before playback, resume after.
 async function speak(text) {
-  const wasListening = listening || (mediaRecorder && mediaRecorder.state === "recording");
-  if (wasListening) pauseListenForPlayback();
+  // Pause mic during playback to prevent the assistant echoing its own voice
+  // (acoustic feedback loop). Resume listening only after audio ends.
+  const wasListening = listening;
+  if (wasListening) stopListen();
   try {
     const r = await fetch(API_BASE + "/tts", {
       method: "POST",
@@ -113,8 +122,11 @@ async function speak(text) {
     });
     if (!r.ok) throw new Error("tts failed");
     const blob = await r.blob();
+    if (!blob.size) throw new Error("empty audio");
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
+    // Let the browser sniff real codec (mp3 from Sarvam, wav from fallback).
+    audioEl.type = blob.type && blob.type !== "application/json" ? blob.type : "";
     await audioEl.play();
     await new Promise((res) => {
       audioEl.onended = res;
@@ -123,158 +135,175 @@ async function speak(text) {
   } catch (e) {
     console.warn("TTS failed, skipping audio", e);
   } finally {
-    if (_speakResumePending) {
-      setTimeout(() => {
-        _speakResumePending = false;
-        if (conversationOn && !busy && !listening) startListen();
-      }, 350);
-    }
+    if (conversationOn && !busy && !listening) startListen();
   }
 }
 
-function pauseListenForPlayback() {
-  if (mediaRecorder && mediaRecorder.state === "recording") {
-    try { mediaRecorder.stop(); } catch (_) {}
-  }
-  listening = false;
-  orb.classList.remove("listening");
-  if (micEmoji) micEmoji.textContent = "🎙️";
-  _speakResumePending = conversationOn;
-}
-
-// ---------- VOICE: unified MediaRecorder (all browsers) ----------
-function hasMic() {
+// ---------- voice input (MediaRecorder, cross-platform) ----------
+// ONE-TAP TOGGLE. We use the POINTER EVENT (pointerup) instead of click/touchstart.
+// Why:
+//   1) Using `touchstart`+preventDefault kills the synthesized click on mobile
+//      (iOS/Android) so the orb tap did nothing — that was the "tap doesn't work"
+//      bug. pointerup fires exactly once per tap on every device.
+//   2) A single unified handler for mouse/touch/pen avoids the double-fire you
+//      get when you bind both touch and click on mobile.
+// CSS ships `touch-action: manipulation` so there is no 300ms delay / zoom.
+function hasMediaSupport() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && typeof MediaRecorder !== "undefined");
 }
 
-// Pick a mimeType the current browser actually supports.
-function pickMime() {
-  const candidates = [
-    "audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus",
-  ];
-  for (const m of candidates) {
+function pickMimeType() {
+  const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  for (const m of types) {
     if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
   }
-  return ""; // let the browser choose
+  return "";
 }
 
-async function startRecorder() {
-  if (!hasMic()) {
-    addLine("err", "Mic not supported on this browser — use TYPE mode.");
-    stopListen();
+async function startListen() {
+  if (listening || busy) return;
+  if (!hasMediaSupport()) {
+    alert("Mic not supported on this browser — use TYPE.");
     return;
   }
   try {
+    // Force-unlock audio context BEFORE requesting mic — mobile Chrome/iOS
+    // blocks getUserMedia if audio context is locked by autoplay policy.
+    if (typeof AudioContext !== "undefined" && !audioUnlocked) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === "suspended") {
+          await ctx.resume();
+        }
+        audioUnlocked = true;
+      } catch (_) {}
+    }
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
-    addLine("err", "Mic permission denied. Allow mic access, or use TYPE mode.");
-    stopListen();
+    let msg = "Mic permission denied — allow mic and retry, or use TYPE.";
+    if (e.name === "NotAllowedError") msg = "🔇 Mic permission BLOCKED. Tap allow when browser asks, then retry.";
+    if (e.name === "NotFoundError") msg = "🎤 No microphone found on this device.";
+    if (e.name === "NotReadableError") msg = "⚠️ Mic in use by another app (close other tabs/apps).";
+    addLine("err", msg);
     return;
   }
-  const mime = pickMime();
+  listening = true;
+  conversationOn = true;
+  orb.classList.add("listening");
+  orb.setAttribute("aria-pressed", "true");
+  const mime = pickMimeType();
   try {
     mediaRecorder = mime ? new MediaRecorder(mediaStream, { mimeType: mime })
                          : new MediaRecorder(mediaStream);
   } catch (e) {
-    addLine("err", "Recorder init failed — use TYPE mode.");
-    mediaStream.getTracks().forEach((t) => t.stop());
+    addLine("err", "Recorder init failed on this browser — use TYPE.");
     stopListen();
     return;
   }
-  mediaChunks = [];
-  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) mediaChunks.push(e.data); };
+  audioChunks = [];
+  mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) audioChunks.push(e.data); };
   mediaRecorder.onstop = async () => {
-    const blob = new Blob(mediaChunks, { type: mediaRecorder.mimeType || "audio/webm" });
-    // Release mic immediately so the next tap can grab it again.
-    if (mediaStream) { mediaStream.getTracks().forEach((t) => t.stop()); mediaStream = null; }
-    if (blob.size < 800) { // silence / too short
-      addLine("err", "Couldn't hear clearly — try again.");
-      busy = false; setStatus("on"); orb.classList.remove("speaking");
-      autoResume();
+    stopVAD();
+    const blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    stopMicTracks();
+    if (blob.size < 500) {
+      if (conversationOn && !busy && !listening) startListen();
       return;
     }
-    busy = true; setStatus("busy"); orb.classList.add("speaking");
-    addLine("you", "🎤 …");
+    const fd = new FormData();
+    fd.append("audio", blob, "voice.webm");
     try {
-      const fd = new FormData();
-      fd.append("audio", blob, "voice.webm");
-      const r = await fetch(API_BASE + "/voice", { method: "POST", body: fd });
+      const r = await fetch(VOICE_URL, { method: "POST", body: fd });
       if (!r.ok) throw new Error("voice failed " + r.status);
-      const data = await r.json();
-      const text = (data.text || "").trim();
-      if (text) {
-        addLine("you", text);
-        const reply = (data.reply || "").trim();
-        if (reply) {
-          addLine("lu", reply);
-          await speak(reply);
-          autoResume();
-          return;
-        }
-      } else {
-        addLine("err", "Couldn't hear clearly — try again.");
+      const j = await r.json();
+      if (j.text) addLine("you", j.text);
+      if (j.reply) {
+        addLine("lu", j.reply);
+        await speak(j.reply);
+      } else if (conversationOn && !busy && !listening) {
+        startListen();
       }
-      autoResume();
     } catch (e) {
-      addLine("err", "Voice backend error — try TYPE mode. (" + e.message + ")");
-    } finally {
-      busy = false; setStatus("on"); orb.classList.remove("speaking");
+      addLine("err", "Voice send failed — backend down?");
+      if (conversationOn && !busy && !listening) startListen();
     }
   };
   mediaRecorder.start();
+  // Start VAD — detect silence → auto-send
+  startVAD();
 }
 
-// ---------- start / stop (orb tap = toggle) ----------
-function startListen() {
-  if (busy && !listening) return;
-  listening = true;
-  conversationOn = true;
-  orb.classList.add("listening");
-  if (micEmoji) micEmoji.textContent = "🎙️";
-  setHint("Sun raha hoon… bol lo (dobara tap = band)");
-  startRecorder();
+function startVAD() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    const src = audioCtx.createMediaStreamSource(mediaStream);
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    silenceStart = Date.now();
+    vadInterval = setInterval(() => {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const rms = Math.sqrt(sum / buf.length);
+      if (rms > VAD_THRESHOLD) { silenceStart = Date.now(); }
+      else if (Date.now() - silenceStart > SILENCE_LIMIT && mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    }, 200);
+  } catch (_) {}
 }
 
-function stopListen() {
-  listening = false;
-  conversationOn = false;
-  orb.classList.remove("listening");
-  if (micEmoji) micEmoji.textContent = "🎙️";
-  try { if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop(); } catch (_) {}
+function stopVAD() {
+  if (vadInterval) { clearInterval(vadInterval); vadInterval = null; }
+  try { if (audioCtx) audioCtx.close(); } catch (_) {}
+  audioCtx = null; analyser = null;
 }
 
-// After a reply finishes, auto-resume listening (hands-free loop).
-function autoResume() {
-  if (conversationOn && !busy && !listening && !_speakResumePending) {
-    startListen();
+function stopMicTracks() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((t) => t.stop());
+    mediaStream = null;
   }
 }
 
-async function askLuciferLoop(text) {
-  await askLucifer(text);
-  autoResume();
+function stopListen() {
+  if (!listening && !conversationOn) return;
+  listening = false;
+  conversationOn = false;
+  orb.classList.remove("listening");
+  orb.setAttribute("aria-pressed", "false");
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    try { mediaRecorder.stop(); } catch (_) {}
+  } else {
+    stopMicTracks();
+  }
 }
 
-// ---------- orb = mic button (ONE TAP TOGGLE, ALL PLATFORMS) ----------
-// We use the POINTER EVENT (pointerup) instead of click/touchstart. The
-// Pointer Events API unifies mouse + touch + pen across Chrome, Firefox,
-// Android, iOS (Safari 13+), PC and laptop. This avoids two classic bugs:
-//   1) Using `touchstart`+preventDefault kills the synthesized click on
-//      iOS/Android, so the tap did nothing (the bug we just hit).
-//   2) Using `click` alone can double-fire on mobile (touch+mouse emulation).
-// pointerup fires exactly once per physical tap on every platform.
-function toggleOrb() {
-  listening ? stopListen() : startListen();
-}
+// ---------- orb tap: TOGGLE conversation on/off ----------
+// Continuous voice mode (ChatGPT/Gemini style):
+//   TAP ONCE → start listening → speak → auto-send on silence → reply → auto-resume
+//   TAP AGAIN → end conversation (stop listening + stop reply audio)
 orb.addEventListener("pointerup", (e) => {
   e.preventDefault();
-  toggleOrb();
-});
-orb.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleOrb(); }
+  unlockAudio();
+  if (busy) return;
+  if (listening || conversationOn) {
+    // End conversation: stop recording + audio playback
+    stopListen();
+    try { audioEl.pause(); } catch (_) {}
+  } else {
+    // Start conversation
+    startListen();
+  }
 });
 
-// ---------- text mode ----------
+// ---------- events ----------
+micBtn.addEventListener("click", () => {
+  if (!hasMediaSupport()) { alert("Mic not supported on this browser — use TYPE."); return; }
+  listening ? stopListen() : startListen();
+});
 textBtn.addEventListener("click", () => {
   typebox.hidden = !typebox.hidden;
   if (!typebox.hidden) textInput.focus();
@@ -286,17 +315,17 @@ sendBtn.addEventListener("click", () => {
 textInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendBtn.click();
 });
+// keyboard accessibility for the orb
+orb.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); orb.dispatchEvent(new PointerEvent("pointerup")); }
+});
 
 // ---------- boot ----------
-async function boot() {
-  if (!hasMic()) {
-    orb.title = "Mic not supported — use TYPE";
-  } else {
-    orb.title = "Tap orb to talk (Hinglish / Hindi)";
-  }
-  fetch(API_BASE + "/health")
-    .then((r) => r.json())
-    .then(() => setStatus("on"))
-    .catch(() => setStatus("off"));
+if (!hasMediaSupport()) {
+  micBtn.title = "Mic not supported — use TYPE";
 }
-boot();
+// health check
+fetch(API_BASE + "/health")
+  .then((r) => r.json())
+  .then(() => setStatus("on"))
+  .catch(() => setStatus("off"));
