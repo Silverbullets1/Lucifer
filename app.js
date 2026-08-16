@@ -31,8 +31,9 @@ let mediaStream = null, mediaRecorder = null, audioChunks = [];
 // VAD (Voice Activity Detection) — auto-send when user stops talking
 let audioCtx = null, analyser = null, vadInterval = null;
 let silenceStart = 0;
-const SILENCE_LIMIT = 3000;   // 3 sec silence → auto-send
-const VAD_THRESHOLD = 0.008;  // low threshold — catches quiet speech too
+const SILENCE_LIMIT = 3000;   // 3s silence after speech → auto-stop + get answer
+const VAD_THRESHOLD = 0.012;  // floor; real threshold is auto-calibrated to ambient noise
+let vadThreshold = VAD_THRESHOLD;
 const MIN_RECORDING_MS = 1500; // at least 1.5s before silence check kicks in
 
 // ---------- audio unlock (mobile autoplay policy) ----------
@@ -144,14 +145,12 @@ async function speak(text) {
 }
 
 // ---------- voice input (MediaRecorder, cross-platform) ----------
-// ONE-TAP TOGGLE. We use the POINTER EVENT (pointerup) instead of click/touchstart.
-// Why:
-//   1) Using `touchstart`+preventDefault kills the synthesized click on mobile
-//      (iOS/Android) so the orb tap did nothing — that was the "tap doesn't work"
-//      bug. pointerup fires exactly once per tap on every device.
-//   2) A single unified handler for mouse/touch/pen avoids the double-fire you
-//      get when you bind both touch and click on mobile.
-// CSS ships `touch-action: manipulation` so there is no 300ms delay / zoom.
+// ONE-TAP TOGGLE. We use POINTERDOWN for instant activation.
+// Why pointerdown (not pointerup/click/touchstart):
+//   1) pointerdown fires immediately on tap — no 300ms delay
+//   2) Unified handler for mouse/touch/pen — no double-fire
+//   3) touchstart+preventDefault kills synthesized click on mobile
+// CSS ships touch-action: manipulation so no delay/zoom.
 function hasMediaSupport() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && typeof MediaRecorder !== "undefined");
 }
@@ -246,18 +245,36 @@ function startVAD() {
     const src = audioCtx.createMediaStreamSource(mediaStream);
     src.connect(analyser);
     const buf = new Uint8Array(analyser.frequencyBinCount);
+    // --- ambient noise calibration (first 500ms) ---
+    // Measure the room's background RMS, then set the speech threshold above
+    // it. This stops faint mic hiss / laptop fan from being read as "talking"
+    // (the old bug: threshold too low → silenceStart kept resetting → never
+    // auto-stops).
+    let ambientSum = 0, ambientN = 0, calibUntil = Date.now() + 500;
+    let spoken = false;          // has the user actually said something yet?
     silenceStart = Date.now();
     vadInterval = setInterval(() => {
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length);
-      // Track when user starts talking
-      if (rms > VAD_THRESHOLD) { silenceStart = Date.now(); }
-      // Auto-send after 3s silence — but only after at least MIN_RECORDING_MS
-      else if (Date.now() - mediaRecorder._startTime > MIN_RECORDING_MS && 
-               Date.now() - silenceStart > SILENCE_LIMIT && 
-               mediaRecorder && mediaRecorder.state === "recording") {
+      if (Date.now() < calibUntil) {            // calibration phase
+        ambientSum += rms; ambientN++;
+        return;
+      }
+      if (!spoken && ambientN > 0) {            // lock threshold after calib
+        const ambient = ambientSum / ambientN;
+        vadThreshold = Math.max(VAD_THRESHOLD, ambient * 3.0, ambient + 0.01);
+      }
+      if (rms > vadThreshold) {
+        // real speech detected → mark spoken, reset silence timer
+        spoken = true;
+        silenceStart = Date.now();
+      } else if (spoken &&
+                 Date.now() - mediaRecorder._startTime > MIN_RECORDING_MS &&
+                 Date.now() - silenceStart > SILENCE_LIMIT &&
+                 mediaRecorder && mediaRecorder.state === "recording") {
+        // user stopped talking 3s ago AND had spoken → auto-stop + get answer
         mediaRecorder.stop();
       }
     }, 200);
