@@ -4,7 +4,6 @@
 // (cross-platform: Chrome, Firefox, Edge, Safari, Android, iOS, PC, laptop).
 
 // ===== CONFIG: backend via Vercel proxy (same-origin, no tunnel needed) =====
-const API_BASE = "/api";
 const sessId = (() => {
   // stable per-client session id for conversation memory across turns
   let s = localStorage.getItem("lucifer_sid");
@@ -31,8 +30,9 @@ let mediaStream = null, mediaRecorder = null, audioChunks = [];
 // VAD (Voice Activity Detection) — auto-send when user stops talking
 let audioCtx = null, analyser = null, vadInterval = null;
 let silenceStart = 0;
-const SILENCE_LIMIT = 1800;   // ms of silence → auto-send
-const VAD_THRESHOLD = 0.01;   // volume threshold for "silence"
+const SILENCE_LIMIT = 3000;   // 3 sec silence → auto-send
+const VAD_THRESHOLD = 0.02;   // slightly less sensitive
+const MIN_RECORDING_MS = 2000; // at least 2s before silence check kicks in
 
 // ---------- audio unlock (mobile autoplay policy) ----------
 let audioUnlocked = false;
@@ -113,8 +113,8 @@ async function askLucifer(text) {
 async function speak(text) {
   // Pause mic during playback to prevent the assistant echoing its own voice
   // (acoustic feedback loop). Resume listening only after audio ends.
-  const wasConversation = conversationOn;
-  if (listening) stopListen();
+  const wasListening = listening;
+  if (wasListening) stopListen();
   try {
     const r = await fetch(API_BASE + "/tts", {
       method: "POST",
@@ -126,6 +126,7 @@ async function speak(text) {
     if (!blob.size) throw new Error("empty audio");
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
+    // Let the browser sniff real codec (mp3 from Sarvam, wav from fallback).
     audioEl.type = blob.type && blob.type !== "application/json" ? blob.type : "";
     await audioEl.play();
     await new Promise((res) => {
@@ -135,8 +136,7 @@ async function speak(text) {
   } catch (e) {
     console.warn("TTS failed, skipping audio", e);
   } finally {
-    // Resume listening only if conversation was on BEFORE we stopped for playback
-    if (wasConversation && !busy && !listening) startListen();
+    if (conversationOn && !busy && !listening) startListen();
   }
 }
 
@@ -230,6 +230,7 @@ async function startListen() {
     }
   };
   mediaRecorder.start();
+  mediaRecorder._startTime = Date.now(); // track for VAD minimum recording
   // Start VAD — detect silence → auto-send
   startVAD();
 }
@@ -248,8 +249,12 @@ function startVAD() {
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length);
+      // Track when user starts talking
       if (rms > VAD_THRESHOLD) { silenceStart = Date.now(); }
-      else if (Date.now() - silenceStart > SILENCE_LIMIT && mediaRecorder && mediaRecorder.state === "recording") {
+      // Auto-send after 3s silence — but only after at least MIN_RECORDING_MS
+      else if (Date.now() - mediaRecorder._startTime > MIN_RECORDING_MS && 
+               Date.now() - silenceStart > SILENCE_LIMIT && 
+               mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop();
       }
     }, 200);
@@ -286,8 +291,8 @@ function stopListen() {
 // Continuous voice mode (ChatGPT/Gemini style):
 //   TAP ONCE → start listening → speak → auto-send on silence → reply → auto-resume
 //   TAP AGAIN → end conversation (stop listening + stop reply audio)
-// Using pointerdown (not pointerup) so first tap itself activates
-orb.addEventListener("pointerdown", (e) => {
+orb.addEventListener("pointerup", (e) => {
+  e.preventDefault();
   unlockAudio();
   if (busy) return;
   if (listening || conversationOn) {
@@ -301,8 +306,7 @@ orb.addEventListener("pointerdown", (e) => {
 });
 
 // ---------- events ----------
-const _micBtn = $("micBtn");
-if (_micBtn) _micBtn.addEventListener("click", () => {
+micBtn.addEventListener("click", () => {
   if (!hasMediaSupport()) { alert("Mic not supported on this browser — use TYPE."); return; }
   listening ? stopListen() : startListen();
 });
@@ -331,4 +335,3 @@ fetch(API_BASE + "/health")
   .then((r) => r.json())
   .then(() => setStatus("on"))
   .catch(() => setStatus("off"));
-/* deploy: 1786820146 */

@@ -30,8 +30,9 @@ let mediaStream = null, mediaRecorder = null, audioChunks = [];
 // VAD (Voice Activity Detection) — auto-send when user stops talking
 let audioCtx = null, analyser = null, vadInterval = null;
 let silenceStart = 0;
-const SILENCE_LIMIT = 1800;   // ms of silence → auto-send
-const VAD_THRESHOLD = 0.01;   // volume threshold for "silence"
+const SILENCE_LIMIT = 3000;   // 3 sec silence → auto-send
+const VAD_THRESHOLD = 0.02;   // slightly less sensitive
+const MIN_RECORDING_MS = 2000; // at least 2s before silence check kicks in
 
 // ---------- audio unlock (mobile autoplay policy) ----------
 let audioUnlocked = false;
@@ -229,6 +230,7 @@ async function startListen() {
     }
   };
   mediaRecorder.start();
+  mediaRecorder._startTime = Date.now(); // track for VAD minimum recording
   // Start VAD — detect silence → auto-send
   startVAD();
 }
@@ -247,8 +249,12 @@ function startVAD() {
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
       const rms = Math.sqrt(sum / buf.length);
+      // Track when user starts talking
       if (rms > VAD_THRESHOLD) { silenceStart = Date.now(); }
-      else if (Date.now() - silenceStart > SILENCE_LIMIT && mediaRecorder && mediaRecorder.state === "recording") {
+      // Auto-send after 3s silence — but only after at least MIN_RECORDING_MS
+      else if (Date.now() - mediaRecorder._startTime > MIN_RECORDING_MS && 
+               Date.now() - silenceStart > SILENCE_LIMIT && 
+               mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop();
       }
     }, 200);

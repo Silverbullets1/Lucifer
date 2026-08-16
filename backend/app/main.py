@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 
-load_dotenv()
+load_dotenv(override=True)
 from .config import settings
 from .brain import reply as brain_reply, stream_reply as brain_stream
 from .stt import transcribe
