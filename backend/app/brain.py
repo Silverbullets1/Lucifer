@@ -79,7 +79,11 @@ async def reply(user_text: str, history=None) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-    return data["choices"][0]["message"].get("content") or ""
+    choices = data.get("choices") or []
+    if not choices:
+        # Defensive: never crash if the model returns an empty choices array.
+        return ""
+    return choices[0].get("message", {}).get("content") or ""
 
 
 async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
@@ -112,7 +116,13 @@ async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
                     chunk = json.loads(payload)
                 except json.JSONDecodeError:
                     continue
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                choices = chunk.get("choices") or []
+                if not choices:
+                    # Nous free model occasionally emits chunks with an empty
+                    # "choices" array (e.g. pre-role or finish sentinel) — skip
+                    # instead of crashing on [0].
+                    continue
+                delta = choices[0].get("delta", {}) or {}
                 text = delta.get("content")
                 if text:
                     yield text
