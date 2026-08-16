@@ -4,6 +4,7 @@
 // (cross-platform: Chrome, Firefox, Edge, Safari, Android, iOS, PC, laptop).
 
 // ===== CONFIG: backend via Vercel proxy (same-origin, no tunnel needed) =====
+const API_BASE = "/api";
 const sessId = (() => {
   // stable per-client session id for conversation memory across turns
   let s = localStorage.getItem("lucifer_sid");
