@@ -1,5 +1,5 @@
-"""DEBUG TEST — Find exact issue"""
-import asyncio, time
+"""DEBUG — Proper async state check"""
+import asyncio
 from playwright.async_api import async_playwright
 
 STUB = """
@@ -14,7 +14,6 @@ STUB = """
   window.MediaRecorder = class extends MR {
     start(){ window.__flow.push('recorder-start'); super.start();
       setTimeout(()=>{ window.__flow.push('dataavailable'); this.dispatchEvent(new Event('dataavailable')); }, 50);
-      setTimeout(()=>this.stop(), 2500);
     }
     stop(){ window.__flow.push('recorder-stop'); super.stop(); }
   };
@@ -32,32 +31,24 @@ async def main():
         await pg.goto("https://lucifer-eight.vercel.app/")
         await pg.wait_for_timeout(1000)
         
-        # Check if API_BASE is defined
-        has_api_base = await pg.evaluate("typeof API_BASE !== 'undefined'")
-        print(f"API_BASE defined: {has_api_base}")
+        # Manual startListen + wait
+        print("=== Manual startListen() with await ===")
+        result = await pg.evaluate("""async () => {
+          try {
+            await startListen();
+            return { ok: true, listening: listening, conversationOn: conversationOn, busy: busy };
+          } catch(e) {
+            return { ok: false, err: e.message, stack: e.stack };
+          }
+        }""")
+        print(f"Result: {result}")
         
-        # Try text chat
-        print("\n=== Text Chat ===")
-        await pg.evaluate("document.getElementById('textBtn').click()")
-        await pg.wait_for_timeout(300)
-        await pg.evaluate("document.getElementById('textInput').value = 'Hello'")
-        await pg.evaluate("document.getElementById('sendBtn').click()")
-        await pg.wait_for_timeout(3000)
-        transcript = await pg.evaluate("document.querySelector('.transcript')?.textContent?.substring(0,80) || 'EMPTY'")
-        print(f"Transcript: {transcript}")
-        
-        # Try voice tap
-        print("\n=== Voice Tap ===")
-        await pg.evaluate("document.getElementById('orb').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))")
-        await pg.wait_for_timeout(500)
-        listening = await pg.evaluate("document.getElementById('orb').classList.contains('listening')")
-        print(f"Listening: {listening}")
-        
-        # Wait for cycle
-        await pg.wait_for_timeout(18000)
-        
+        # Check flow
         flow = await pg.evaluate("window.__flow || []")
         print(f"Flow: {flow}")
+        
+        listening = await pg.evaluate("document.getElementById('orb').classList.contains('listening')")
+        print(f"Listening: {listening}")
         
         print(f"\nLogs: {logs[:5]}")
         

@@ -12,7 +12,7 @@ const sessId = (() => {
   return s;
 })();
 const VOICE_URL = API_BASE + "/voice?sid=" + sessId;
-const CHAT_URL = API_BASE + "/chat/stream?sid=" + sessId;
+const CHAT_URL = API_BASE + "/chat?sid=" + sessId;
 // ============================================================================
 
 const $ = (id) => document.getElementById(id);
@@ -294,16 +294,14 @@ function stopListen() {
 // Continuous voice mode (ChatGPT/Gemini style):
 //   TAP ONCE → start listening → speak → auto-send on silence → reply → auto-resume
 //   TAP AGAIN → end conversation (stop listening + stop reply audio)
-orb.addEventListener("pointerdown", (e) => {
+orb.addEventListener("pointerdown", async (e) => {
   unlockAudio();
   if (busy) return;
   if (listening || conversationOn) {
-    // End conversation: stop recording + audio playback
     stopListen();
     try { audioEl.pause(); } catch (_) {}
   } else {
-    // Start conversation
-    startListen();
+    await startListen();
   }
 });
 
