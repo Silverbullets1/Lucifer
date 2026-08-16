@@ -94,13 +94,15 @@ async function askLucifer(text) {
   busy = true; setStatus("busy"); orb.classList.add("speaking");
   addLine("you", text);
   try {
-    const r = await fetch(CHAT_URL, {
+    // Use /chat (non-streaming) for reliability
+    const r = await fetch(API_BASE + "/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
     if (!r.ok) throw new Error("chat failed");
-    const reply = (await r.text()).trim();
+    const j = await r.json();
+    const reply = (j.reply || "").trim();
     if (!reply) throw new Error("empty reply");
     addLine("lu", reply);
     await speak(reply);
