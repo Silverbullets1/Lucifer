@@ -114,8 +114,8 @@ async function askLucifer(text) {
 async function speak(text) {
   // Pause mic during playback to prevent the assistant echoing its own voice
   // (acoustic feedback loop). Resume listening only after audio ends.
-  const wasListening = listening;
-  if (wasListening) stopListen();
+  const wasConversation = conversationOn;
+  if (listening) stopListen();
   try {
     const r = await fetch(API_BASE + "/tts", {
       method: "POST",
@@ -127,7 +127,6 @@ async function speak(text) {
     if (!blob.size) throw new Error("empty audio");
     const url = URL.createObjectURL(blob);
     audioEl.src = url;
-    // Let the browser sniff real codec (mp3 from Sarvam, wav from fallback).
     audioEl.type = blob.type && blob.type !== "application/json" ? blob.type : "";
     await audioEl.play();
     await new Promise((res) => {
@@ -137,7 +136,8 @@ async function speak(text) {
   } catch (e) {
     console.warn("TTS failed, skipping audio", e);
   } finally {
-    if (conversationOn && !busy && !listening) startListen();
+    // Resume listening only if conversation was on BEFORE we stopped for playback
+    if (wasConversation && !busy && !listening) startListen();
   }
 }
 
