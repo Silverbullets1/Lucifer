@@ -96,7 +96,7 @@ async def stream_reply(user_text: str, history=None) -> AsyncIterator[str]:
             "POST", f"{base}/chat/completions",
             headers={"Authorization": f"Bearer {api_key}",
                      "Content-Type": "application/json"},
-            json={"model": Settings().model, "messages": messages,
+            json={"model": settings.model, "messages": messages,
                   "max_tokens": 700, "temperature": 0.8, "stream": True},
         ) as resp:
             resp.raise_for_status()

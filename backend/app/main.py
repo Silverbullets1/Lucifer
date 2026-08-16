@@ -308,8 +308,9 @@ async def ws(ws: WebSocket):
             if not text.strip():
                 continue
             reply = await brain_reply(text)
-            await ws.send_json({"type": "llm", "text": sanitize_reply(reply)})
-            wav = await synthesize(reply, settings)
+            clean = sanitize_reply(reply)
+            await ws.send_json({"type": "llm", "text": clean})
+            wav = await synthesize(clean, settings)
             await ws.send_bytes(wav)
     except WebSocketDisconnect:
         pass

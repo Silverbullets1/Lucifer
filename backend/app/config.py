@@ -1,7 +1,20 @@
 """Lucifer backend configuration (env-driven, .env or env vars)."""
 from __future__ import annotations
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
+# Load .env EXPLICITLY by absolute path, BEFORE Settings() is built, so the
+# env vars are present regardless of cwd (systemd sets WorkingDirectory but
+# python-dotenv's find_dotenv() can miss backend/.env from the app/ subdir).
+# Without this the service silently falls back to the hardcoded defaults
+# (e.g. wrong brain model) instead of the tuned .env values.
+_ENV_PATH = Path(__file__).resolve().parent.parent / ".env"  # backend/.env
+if _ENV_PATH.exists():
+    load_dotenv(_ENV_PATH, override=True)
+else:  # fall back to conventional search if layout ever changes
+    load_dotenv(override=True)
 
 
 class Settings(BaseModel):

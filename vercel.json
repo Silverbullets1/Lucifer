@@ -6,10 +6,14 @@
   "functions": {
     "api/voice.js": { "maxDuration": 60 },
     "api/chat/stream.js": { "maxDuration": 30 },
-    "api/tts.js": { "maxDuration": 30 }
+    "api/tts.js": { "maxDuration": 30 },
+    "api/chat.js": { "maxDuration": 30 },
+    "api/health.js": { "maxDuration": 10 }
   },
   "rewrites": [
+    { "source": "/api/health", "destination": "/api/health.js" },
     { "source": "/api/chat/stream", "destination": "/api/chat/stream.js" },
+    { "source": "/api/chat", "destination": "/api/chat.js" },
     { "source": "/api/voice", "destination": "/api/voice.js" },
     { "source": "/api/tts", "destination": "/api/tts.js" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }

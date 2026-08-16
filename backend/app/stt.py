@@ -86,6 +86,9 @@ def transcribe(audio_bytes: bytes, settings: Settings, session_id: str = "defaul
             f.write(clean_audio)
             path = f.name
         try:
+            # Force Hindi: this is a Hinglish/Hindi-first assistant and Whisper
+            # auto-detect misreads Roman-Hindi as 'nn' (Norwegian) at low conf.
+            # Forcing "hi" keeps transcription stable for SAM's use-case.
             segments, _ = model.transcribe(path, language="hi", beam_size=5)
             result = "".join(seg.text for seg in segments).strip()
             if result:
