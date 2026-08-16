@@ -31,8 +31,8 @@ let mediaStream = null, mediaRecorder = null, audioChunks = [];
 let audioCtx = null, analyser = null, vadInterval = null;
 let silenceStart = 0;
 const SILENCE_LIMIT = 3000;   // 3 sec silence → auto-send
-const VAD_THRESHOLD = 0.02;   // slightly less sensitive
-const MIN_RECORDING_MS = 2000; // at least 2s before silence check kicks in
+const VAD_THRESHOLD = 0.008;  // low threshold — catches quiet speech too
+const MIN_RECORDING_MS = 1500; // at least 1.5s before silence check kicks in
 
 // ---------- audio unlock (mobile autoplay policy) ----------
 let audioUnlocked = false;
